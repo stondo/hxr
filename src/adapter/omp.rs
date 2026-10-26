@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::Harness;
+use super::SearchPattern;
 use super::util;
 use crate::model::Session;
 
@@ -124,5 +125,38 @@ impl Harness for Omp {
         let mut argv = vec!["omp".to_string(), "-r".to_string(), session.id.clone()];
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
+    }
+
+    fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        let home = super::home_dir().ok()?;
+        let db = home.join(".omp").join("agent").join("history.db");
+        let conn =
+            Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        let like = pat
+            .literal
+            .as_ref()
+            .map(|l| {
+                format!(
+                    "%{}%",
+                    l.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            })
+            .unwrap_or_else(|| "%".to_string());
+        let mut stmt = conn
+            .prepare("SELECT prompt FROM history WHERE session_id = ?1 AND prompt LIKE ?2")
+            .ok()?;
+        let rows = stmt
+            .query_map(rusqlite::params![session.id, like], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()?;
+        for prompt in rows.flatten() {
+            if let Some(m) = pat.find(&prompt) {
+                return Some(super::snippet(&prompt, m.range()));
+            }
+        }
+        None
     }
 }

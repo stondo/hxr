@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 use super::Harness;
+use super::SearchPattern;
 use super::util;
 use crate::model::Session;
 
@@ -59,6 +60,11 @@ impl Harness for Pi {
         let mut argv = vec!["pi".to_string(), "--session".to_string(), path];
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
+    }
+
+    fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::jsonl_content_match(std::path::Path::new(path), pat)
     }
 }
 

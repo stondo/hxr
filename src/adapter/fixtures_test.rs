@@ -68,7 +68,12 @@ fn all_adapters_read_fixtures() {
              time_updated INTEGER, parent_id TEXT, time_archived INTEGER);
              INSERT INTO session_v2 VALUES ('ses_AAA','/tmp/oc','Title A','slug-a',2000,NULL,NULL);
              INSERT INTO session_v2 VALUES ('ses_BBB','/tmp/oc','','slug-b',1000,NULL,NULL);
-             INSERT INTO session_v2 VALUES ('ses_ARCH','/tmp/oc','x','x',3000,NULL,99);",
+             CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL,
+             session_id TEXT NOT NULL, time_created INTEGER NOT NULL,
+             time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+             INSERT INTO session_v2 VALUES ('ses_ARCH','/tmp/oc','x','x',3000,NULL,99);
+             INSERT INTO part VALUES ('p1','m1','ses_AAA',1,1,'{\"type\":\"text\",\"text\":\"the needleOC hides here\"}');
+             INSERT INTO part VALUES ('p2','m1','ses_BBB',1,1,'{\"type\":\"text\",\"text\":\"nothing relevant\"}');",
         )
         .unwrap();
     }
@@ -78,7 +83,8 @@ fn all_adapters_read_fixtures() {
     write(
         &cl_dir.join("11111111-1111-1111-1111-111111111111.jsonl"),
         "{\"type\":\"user\",\"cwd\":\"/tmp/cl\",\"message\":{\"role\":\"user\",\"content\":\"first ask\"}}\n\
-         {\"type\":\"ai-title\",\"aiTitle\":\"AI Title\"}\n",
+         {\"type\":\"ai-title\",\"aiTitle\":\"AI Title\"}\n\
+         {\"type\":\"user\",\"cwd\":\"/tmp/cl\",\"message\":{\"role\":\"user\",\"content\":\"deep needleCL line\"}}\n",
     );
     write(
         &cl_dir.join("22222222-2222-2222-2222-222222222222.jsonl"),
@@ -91,6 +97,12 @@ fn all_adapters_read_fixtures() {
     );
 
     // --- codex: state db with titled row + first_user_message fallback
+    let cx_rollout = home.join("rollout-t1.jsonl");
+    write(
+        &cx_rollout,
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"t1\"}}\n\
+         {\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"content\":[{\"type\":\"input_text\",\"text\":\"needleCX in rollout\"}]}}\n",
+    );
     let cx_db = home.join(".codex/state_9.sqlite");
     write(&cx_db, "");
     {
@@ -102,6 +114,11 @@ fn all_adapters_read_fixtures() {
              model TEXT, git_branch TEXT);
              INSERT INTO threads VALUES ('t1','/r1',100,200,'/tmp/cx1','T One','hello world',2000,2000,0,'m1','main');
              INSERT INTO threads VALUES ('t2','/r2',100,200,'/tmp/cx2','','fum title',1000,1000,0,NULL,NULL);",
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE threads SET rollout_path = ?1 WHERE id = 't1'",
+            [cx_rollout.to_string_lossy().into_owned()],
         )
         .unwrap();
     }
@@ -123,7 +140,7 @@ fn all_adapters_read_fixtures() {
              CREATE TABLE history (id INTEGER PRIMARY KEY AUTOINCREMENT, prompt TEXT NOT NULL, created_at INTEGER NOT NULL, cwd TEXT, session_id TEXT, use_count INTEGER NOT NULL);
              INSERT INTO session_titles VALUES ('omp1','OMP Title',500);
              INSERT INTO history (prompt, created_at, cwd, session_id, use_count) VALUES ('prompt one',400,'/tmp/omp-old','omp1',1);
-             INSERT INTO history (prompt, created_at, cwd, session_id, use_count) VALUES ('prompt two',450,'/tmp/omp-new','omp1',1);",
+             INSERT INTO history (prompt, created_at, cwd, session_id, use_count) VALUES ('prompt two',450,'/tmp/omp-new','omp1',1);\n             INSERT INTO history (prompt, created_at, cwd, session_id, use_count) VALUES ('needleOMP wording',460,'/tmp/omp-new','omp1',1);",
         )
         .unwrap();
     }
@@ -140,7 +157,8 @@ fn all_adapters_read_fixtures() {
         &km_dir.join("agents/main/wire.jsonl"),
         "{\"type\":\"metadata\",\"protocol_version\":\"1.5\",\"created_at\":100}\n\
          {\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"kimi ask\\nsecond line\"}]}\n\
-         {\"type\":\"llm.request\",\"model\":\"k3\"}\n",
+         {\"type\":\"llm.request\",\"model\":\"k3\"}\n\
+         {\"type\":\"turn.prompt\",\"input\": [{\"type\":\"text\",\"text\":\"later needleKI turn\"}]}\n",
     );
     write(
         &home.join(".kimi-code/session_index.jsonl"),
@@ -155,7 +173,10 @@ fn all_adapters_read_fixtures() {
         &home.join(".reasonix/sessions/demo.meta.json"),
         "{\"summary\":\"R summary\",\"workspace\":\"/tmp/rp\",\"branch\":\"main\",\"turnCount\":5,\"totalCostUsd\":0.5}",
     );
-    write(&home.join(".reasonix/sessions/demo.jsonl"), "{}\n");
+    write(
+        &home.join(".reasonix/sessions/demo.jsonl"),
+        "{\"type\":\"user\",\"text\":\"needleRX in transcript\"}\n",
+    );
     write(
         &home.join(".reasonix/sessions/gone__archive_1.meta.json"),
         "{\"summary\":\"archived\",\"workspace\":\"/tmp\"}",
@@ -232,8 +253,34 @@ fn all_adapters_read_fixtures() {
         assert_eq!(k.cwd, Path::new("/tmp/kimi"));
         assert_eq!(k.extra.get("model").map(String::as_str), Some("k3"));
 
+        // --- content search (-G): every adapter finds its needle
         let rx = run_adapter("reasonix");
         assert_eq!(rx.len(), 1, "__archive_ sessions must be filtered");
+        let pat = |p: &str| crate::adapter::SearchPattern::new(p).unwrap();
+        let cm = |harness: &str, s: &Session, p: &str| {
+            registry()
+                .into_iter()
+                .find(|h| h.name() == harness)
+                .unwrap()
+                .content_match(s, &pat(p))
+        };
+        assert!(cm("opencode", find(&oc, "ses_AAA"), "needleOC").is_some());
+        assert!(cm("opencode", find(&oc, "ses_BBB"), "needleOC").is_none());
+        assert!(
+            cm(
+                "claude",
+                find(&cl, "11111111-1111-1111-1111-111111111111"),
+                "needleCL"
+            )
+            .is_some()
+        );
+        assert!(cm("codex", find(&cx, "t1"), "needleCX").is_some());
+        assert!(cm("pi", find(&pi, "pid1"), "pi ask").is_some());
+        assert!(cm("omp", find(&om, "omp1"), "needleOMP").is_some());
+        assert!(cm("qwen", find(&qw, "q1"), "qwen ask").is_some());
+        assert!(cm("kimi", find(&km, "session_k1"), "needleKI").is_some());
+        assert!(cm("reasonix", find(&rx, "demo"), "needleRX").is_some());
+
         let r = find(&rx, "demo");
         assert_eq!(r.title, "R summary");
         assert_eq!(r.cwd, Path::new("/tmp/rp"));

@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use super::Harness;
+use super::SearchPattern;
+use super::util;
 use crate::model::Session;
 
 pub struct Opencode;
@@ -81,6 +83,47 @@ impl Harness for Opencode {
         let mut argv = vec!["opencode".to_string(), "-s".to_string(), session.id.clone()];
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
+    }
+
+    fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        let db = db_path().ok()?;
+        let conn =
+            Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        // literal patterns prefilter with LIKE so the big db is not streamed
+        // into Rust; regex patterns pass a plain "%" wildcard instead
+        let like = pat
+            .literal
+            .as_ref()
+            .map(|l| {
+                format!(
+                    "%{}%",
+                    l.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            })
+            .unwrap_or_else(|| "%".to_string());
+        let mut stmt = conn
+            .prepare("SELECT data FROM part WHERE session_id = ?1 AND data LIKE ?2")
+            .ok()?;
+        let rows = stmt
+            .query_map(rusqlite::params![session.id, like], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()?;
+        for row in rows.flatten() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&row) else {
+                continue;
+            };
+            let mut values = Vec::new();
+            util::json_string_values(&v, &mut values);
+            for value in values {
+                if let Some(m) = pat.find(value) {
+                    return Some(super::snippet(value, m.range()));
+                }
+            }
+        }
+        None
     }
 }
 

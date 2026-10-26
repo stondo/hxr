@@ -2,7 +2,7 @@
 //! text extraction, mtime. Kept dependency-light on purpose.
 
 use serde_json::Value;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -102,6 +102,52 @@ pub(crate) fn first_user_text(entries: &[Value], type_tag: &str) -> Option<Strin
         let text = text.trim();
         if !text.is_empty() && !text.starts_with('<') {
             return Some(first_line_cut(text, 80));
+        }
+    }
+    None
+}
+
+/// Walk a JSON value and collect every string *value* (keys excluded).
+pub(crate) fn json_string_values<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+    match v {
+        Value::String(s) => out.push(s.as_str()),
+        Value::Array(items) => {
+            for item in items {
+                json_string_values(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values() {
+                json_string_values(value, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Content-scan one JSONL file: parse each line, match the pattern against
+/// the line's string values only (JSON keys never match), return the first
+/// snippet. Reads the whole file: content search must see beyond the
+/// head-caps used for listing.
+pub(crate) fn jsonl_content_match(path: &Path, pat: &super::SearchPattern) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        // sound pre-check ONLY for literals JSON leaves verbatim; anything
+        // else (regex, escapable chars) must go through full parsing
+        if pat.probe_safe() && pat.find(&line).is_none() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let mut values = Vec::new();
+        json_string_values(&v, &mut values);
+        for value in values {
+            if let Some(m) = pat.find(value) {
+                return Some(super::snippet(value, m.range()));
+            }
         }
     }
     None

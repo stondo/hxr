@@ -14,6 +14,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::Harness;
+use super::SearchPattern;
 use super::util;
 use crate::model::Session;
 
@@ -50,6 +51,11 @@ impl Harness for Codex {
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
     }
+
+    fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::jsonl_content_match(std::path::Path::new(path), pat)
+    }
 }
 
 /// Highest-versioned `state_*.sqlite` under the codex root.
@@ -81,7 +87,7 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, cwd, coalesce(nullif(title, ''), substr(first_user_message, 1, 120)), \
          coalesce(updated_at_ms, updated_at * 1000, recency_at * 1000, created_at * 1000), \
-         substr(first_user_message, 1, 600), model, git_branch \
+         substr(first_user_message, 1, 600), model, git_branch, rollout_path \
          FROM threads WHERE coalesce(archived, 0) = 0",
     )?;
 
@@ -93,12 +99,13 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
         let first_msg: Option<String> = r.get(4)?;
         let model: Option<String> = r.get(5)?;
         let branch: Option<String> = r.get(6)?;
-        Ok((id, cwd, title, updated, first_msg, model, branch))
+        let rollout: Option<String> = r.get(7)?;
+        Ok((id, cwd, title, updated, first_msg, model, branch, rollout))
     })?;
 
     let mut sessions = Vec::new();
     for row in rows {
-        let Ok((id, cwd, title, updated_ms, first_msg, model, branch)) = row else {
+        let Ok((id, cwd, title, updated_ms, first_msg, model, branch, rollout)) = row else {
             continue;
         };
         let mut extra = std::collections::BTreeMap::new();
@@ -110,6 +117,9 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
         }
         if let Some(b) = branch {
             extra.insert("branch".to_string(), b);
+        }
+        if let Some(p) = rollout {
+            extra.insert("path".to_string(), p);
         }
         sessions.push(Session {
             id,

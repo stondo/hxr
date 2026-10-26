@@ -36,6 +36,15 @@ pub trait Harness: Send + Sync {
     /// Build the resume command (argv including the binary, plus the working
     /// directory to run it in).
     fn resume(&self, session: &Session, extra: &[String]) -> (Vec<String>, PathBuf);
+
+    /// Content search (`-G`): return a snippet around the first match of
+    /// `pattern` in this session's conversation bodies, or None when the
+    /// session does not match (or the adapter has no content source).
+    /// Implementations match against string *values* of parsed JSON, not raw
+    /// lines, so JSON keys never false-positive.
+    fn content_match(&self, _session: &Session, _pattern: &SearchPattern) -> Option<String> {
+        None
+    }
 }
 
 /// Adapter registry in tab order.
@@ -58,6 +67,60 @@ pub fn home_dir() -> Result<std::path::PathBuf> {
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
         .context("hxr: neither HXR_HOME nor HOME is set")
+}
+
+/// A compiled content-search pattern (`-G`). Literal patterns (no regex
+/// metacharacters) keep their plain form so sqlite-backed adapters can
+/// prefilter with `LIKE` instead of streaming rows into Rust.
+pub struct SearchPattern {
+    pub re: regex::Regex,
+    pub literal: Option<String>,
+}
+
+impl SearchPattern {
+    pub fn new(pattern: &str) -> anyhow::Result<Self> {
+        let literal = is_literal(pattern).then(|| pattern.to_string());
+        let re = regex::Regex::new(pattern)
+            .with_context(|| format!("hxr: bad --grep pattern {pattern:?}"))?;
+        Ok(Self { re, literal })
+    }
+
+    /// First match in `haystack`, if any.
+    pub fn find<'a>(&self, haystack: &'a str) -> Option<regex::Match<'a>> {
+        self.re.find(haystack)
+    }
+}
+
+fn is_literal(p: &str) -> bool {
+    !p.chars().any(|c| "\\.+*?()|[]{}^$#&-~".contains(c))
+}
+
+impl SearchPattern {
+    /// True when the pattern is a literal that JSON encoding leaves verbatim
+    /// (printable ASCII, no quotes/backslashes), so a raw-line probe before
+    /// JSON parsing cannot miss matches. Regex patterns and literals with
+    /// escapable characters always go through full parsing.
+    pub fn probe_safe(&self) -> bool {
+        self.literal.as_deref().is_some_and(|l| {
+            l.chars()
+                .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
+        })
+    }
+}
+
+/// Short, single-line snippet around a match for display.
+pub fn snippet(text: &str, m: std::ops::Range<usize>) -> String {
+    let start = text[..m.start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end = text[m.end..]
+        .find('\n')
+        .map(|i| m.end + i)
+        .unwrap_or(text.len());
+    let line = text[start..end].trim();
+    let mut out: String = line.chars().take(119).collect();
+    if line.chars().count() > 120 {
+        out.push('…');
+    }
+    out
 }
 
 /// True if `bin` resolves to an executable file on PATH.

@@ -15,6 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::Harness;
+use super::SearchPattern;
 use super::util;
 use crate::model::Session;
 
@@ -65,6 +66,11 @@ impl Harness for Kimi {
         let mut argv = vec!["kimi".to_string(), "-S".to_string(), session.id.clone()];
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
+    }
+
+    fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::jsonl_content_match(std::path::Path::new(path), pat)
     }
 }
 

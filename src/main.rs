@@ -41,6 +41,11 @@ struct Cli {
     #[arg(long)]
     since: Option<String>,
 
+    /// Content search: keep only sessions whose conversation bodies match
+    /// this pattern (Rust regex; plain text when no metacharacters)
+    #[arg(short = 'G', long = "grep")]
+    grep: Option<String>,
+
     /// Internal: advance the tab cycle in the state file and print the feed
     /// (hidden; used by fzf reload bindings).
     #[arg(long, hide = true)]
@@ -107,8 +112,18 @@ fn main() -> Result<()> {
         match detected
             .first()
             .and_then(|d| d.sessions.iter().find(|s| &s.id == id))
+            .cloned()
         {
-            Some(session) => print!("{}", render_preview(session)),
+            Some(mut session) => {
+                if let Ok(pat) = std::env::var("HXR_GREP")
+                    && let Ok(p) = adapter::SearchPattern::new(&pat)
+                    && let Some(h) = detected.first().map(|d| d.harness.as_ref())
+                    && let Some(snip) = session_hit(h, &session, &p)
+                {
+                    session.extra.insert("match".to_string(), snip);
+                }
+                print!("{}", render_preview(&session));
+            }
             None => println!("(no {harness} session {id})"),
         }
         return Ok(());
@@ -152,6 +167,9 @@ fn main() -> Result<()> {
         check_detected(&detected, scope.as_deref())?;
         let mut sessions = flatten(&detected);
         apply_since(&mut sessions, since_ms)?;
+        if let Some(pat) = &cli.grep {
+            apply_grep(&mut sessions, &detected, pat)?;
+        }
         // Merged lists carry 2-char harness tags so alt-0 stays navigable.
         let tags = scope.is_none();
         let stdout = std::io::stdout();
@@ -180,8 +198,16 @@ fn main() -> Result<()> {
 
     let mut sessions = flatten(&detected);
     apply_since(&mut sessions, since_ms)?;
+    if let Some(pat) = &cli.grep {
+        apply_grep(&mut sessions, &detected, pat)?;
+    }
     if sessions.is_empty() {
-        bail!("hxr: no sessions within the --since window");
+        let msg = match (&cli.grep, &cli.since) {
+            (Some(_), _) => "hxr: no sessions match the --grep pattern",
+            (None, Some(_)) => "hxr: no sessions within the --since window",
+            (None, None) => "hxr: no sessions found",
+        };
+        bail!("{msg}");
     }
     if let Some(tab) = &initial_tab
         && !sessions.iter().any(|s| &s.harness == tab)
@@ -189,6 +215,14 @@ fn main() -> Result<()> {
         bail!("hxr: harness not detected: {tab}");
     }
 
+    // -G: propagate the pattern to fzf child processes (--preview) so the
+    // match snippet can be re-derived per highlight. Single-threaded here.
+    if let Some(pat) = &cli.grep {
+        // Safety: no worker threads are running at this point.
+        unsafe {
+            std::env::set_var("HXR_GREP", pat);
+        }
+    }
     let picked = if let Some(prefix) = &cli.session {
         resolve_by_prefix(&sessions, prefix)?
     } else {
@@ -223,6 +257,10 @@ fn main() -> Result<()> {
     if !cwd.is_dir() {
         bail!("hxr: directory no longer exists: {}", cwd.display());
     }
+    // Safety: no worker threads are running at this point.
+    unsafe {
+        std::env::remove_var("HXR_GREP");
+    }
     let err = Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(&cwd)
@@ -255,6 +293,51 @@ fn apply_since(sessions: &mut Vec<Session>, since_ms: Option<anyhow::Result<i64>
         sessions.retain(|s| s.updated_ms >= now - dur);
     }
     Ok(())
+}
+
+/// Content-search filter (`-G`): keep sessions whose bodies match, attaching
+/// the first matching snippet as `extra["match"]`. Titles match too, so the
+/// filter is a superset of the default fuzzy title search.
+fn apply_grep(sessions: &mut Vec<Session>, detected: &[Detected], pattern: &str) -> Result<()> {
+    use rayon::prelude::*;
+    let pat = adapter::SearchPattern::new(pattern)?;
+    let hits: Vec<Option<String>> = sessions
+        .par_iter()
+        .map(|s| {
+            detected
+                .iter()
+                .find(|d| d.harness.name() == s.harness)
+                .and_then(|d| session_hit(d.harness.as_ref(), s, &pat))
+        })
+        .collect();
+    let mut kept = Vec::with_capacity(sessions.len());
+    for (session, hit) in sessions.drain(..).zip(hits) {
+        if let Some(snippet) = hit {
+            let mut s = session;
+            s.extra.insert("match".to_string(), snippet);
+            kept.push(s);
+        }
+    }
+    *sessions = kept;
+    Ok(())
+}
+
+/// Full -G hit cascade for one session: title, then first user message,
+/// then conversation bodies via the adapter.
+fn session_hit(
+    h: &dyn adapter::Harness,
+    s: &Session,
+    pat: &adapter::SearchPattern,
+) -> Option<String> {
+    if pat.find(&s.title).is_some() {
+        return Some(format!("(title) {}", s.title));
+    }
+    if let Some(msg) = s.extra.get("first_user_message")
+        && let Some(m) = pat.find(msg)
+    {
+        return Some(adapter::snippet(msg, m.range()));
+    }
+    h.content_match(s, pat)
 }
 
 /// Detection rule: binary on PATH and discover() yields >= 1 session.
@@ -424,6 +507,11 @@ fn render_preview(s: &Session) -> String {
         if let Some(v) = s.extra.get(key) {
             let _ = writeln!(out, "{label:<9} {v}");
         }
+    }
+    if let Some(m) = s.extra.get("match") {
+        let _ = writeln!(out, "──────────────────────────────────");
+        let _ = writeln!(out, "match:");
+        let _ = writeln!(out, "{}", cap(m, 6, 600));
     }
     if let Some(msg) = first_message(s) {
         let _ = writeln!(out, "──────────────────────────────────");
