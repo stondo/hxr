@@ -94,16 +94,18 @@ pub fn tab_bar(names: &[String], active: Option<&str>) -> String {
 /// Header lines for the fzf feed (padded into display field 4 so
 /// `--with-nth=4` keeps showing them). These travel WITH the list through
 /// `--header-lines`, which is how the tab bar survives reloads.
-pub fn feed_header(names: &[String], active: Option<&str>) -> Vec<String> {
+pub fn feed_header(names: &[String], active: Option<&str>, grep: Option<&str>) -> Vec<String> {
+    let mut bar = tab_bar(names, active);
+    if let Some(g) = grep.filter(|g| !g.is_empty()) {
+        let g: String = g.chars().take(48).collect();
+        bar = format!("{bar}   ·   content: \"{g}\"");
+    }
     let hint = if names.len() > 1 {
-        "tab next · shift-tab prev · enter resume · esc cancel"
+        "tab next · shift-tab prev · ctrl-g search inside · enter resume · esc cancel"
     } else {
-        "enter resume · esc cancel"
+        "ctrl-g search inside · enter resume · esc cancel"
     };
-    vec![
-        format!("\t\t\t{}", tab_bar(names, active)),
-        format!("\t\t\t{hint}"),
-    ]
+    vec![format!("\t\t\t{bar}"), format!("\t\t\t{hint}")]
 }
 
 /// Parse a `--since` duration like `30d`, `2w`, `48h`, `15m`, `90s` into ms.

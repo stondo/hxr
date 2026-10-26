@@ -59,6 +59,11 @@ struct Cli {
     #[arg(long, hide = true)]
     cycle: Option<String>,
 
+    /// Internal: set the in-picker content-search pattern (empty clears) and
+    /// print the feed (hidden; the ctrl-g binding).
+    #[arg(long, hide = true)]
+    search: Option<String>,
+
     /// Internal: per-picker tab-state file (hidden).
     #[arg(long, hide = true)]
     state: Option<String>,
@@ -123,7 +128,16 @@ fn main() -> Result<()> {
             .cloned()
         {
             Some(mut session) => {
-                if let Ok(pat) = std::env::var("HXR_GREP")
+                let live_grep = cli
+                    .state
+                    .as_deref()
+                    .and_then(|p| {
+                        let (_, _, grep) = read_state(p);
+                        nonempty(&grep).map(str::to_string)
+                    })
+                    .or_else(|| std::env::var("HXR_GREP").ok())
+                    .and_then(|g| nonempty(&g).map(str::to_string));
+                if let Some(pat) = live_grep
                     && let Ok(p) = adapter::SearchPattern::new(&pat)
                     && let Some(h) = detected.first().map(|d| d.harness.as_ref())
                     && let Some(snip) = session_hit(h, &session, &p)
@@ -145,28 +159,20 @@ fn main() -> Result<()> {
     // Internal feed mode: fzf's tab/btab reload runs us with --cycle/--state.
     // We advance the cycle position, then print header lines (tab bar, travels
     // with the list via --header-lines) + the target tab's session lines.
-    if let (Some(state_path), Some(dir)) = (&cli.state, cli.cycle.as_deref()) {
-        let (current, names) = read_state(state_path);
-        let target = cycle_target(&current, &names, dir);
-        write_state(std::path::Path::new(state_path), &target, &names);
-        let tab = if target == "all" {
-            None
+    if let Some(state_path) = &cli.state {
+        let (current, names, cur_grep) = read_state(state_path);
+        let (target, grep) = if let Some(dir) = cli.cycle.as_deref() {
+            let target = cycle_target(&current, &names, dir);
+            write_state(std::path::Path::new(state_path), &target, &names, &cur_grep);
+            (target, nonempty(&cur_grep).map(str::to_string))
+        } else if let Some(pat) = cli.search.as_deref() {
+            write_state(std::path::Path::new(state_path), &current, &names, pat);
+            (current, nonempty(pat).map(str::to_string))
         } else {
-            Some(target.as_str())
+            return Ok(());
         };
-        let detected = discover(tab, cli.all);
-        let mut sessions = flatten(&detected);
-        apply_since(&mut sessions, since_ms)?;
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-        for line in ui::feed_header(&names, tab)
-            .into_iter()
-            .chain(ui::format_lines(&sessions, tab.is_none()))
-        {
-            if writeln!(out, "{line}").is_err() {
-                break;
-            }
-        }
+        let tab = tab_of(&target);
+        emit_feed(tab, &names, grep.as_deref(), cli.since.as_deref(), cli.all)?;
         return Ok(());
     }
 
@@ -248,6 +254,7 @@ fn main() -> Result<()> {
             &names,
             initial_tab.as_deref(),
             cli.since.as_deref(),
+            cli.grep.as_deref(),
         )?
     };
 
@@ -400,13 +407,16 @@ fn pick_with_fzf(
     names: &[String],
     initial_tab: Option<&str>,
     since: Option<&str>,
+    grep: Option<&str>,
 ) -> Result<Option<Session>> {
     let state = state_path();
     if let Some(dir) = state.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let initial = initial_tab.unwrap_or("all").to_string();
-    write_state(&state, &initial, names);
+    // the CLI -G pattern seeds the state so tab cycling and the preview pane
+    // stay in content mode for the whole session
+    write_state(&state, &initial, names, grep.unwrap_or(""));
 
     let feed: Vec<Session> = match initial_tab {
         Some(tab) => sessions
@@ -416,7 +426,7 @@ fn pick_with_fzf(
             .collect(),
         None => sessions.to_vec(),
     };
-    let mut input = ui::feed_header(names, initial_tab).join("\n");
+    let mut input = ui::feed_header(names, initial_tab, grep).join("\n");
     input.push('\n');
     input.push_str(&ui::format_lines(&feed, initial_tab.is_none()).join("\n"));
 
@@ -471,6 +481,10 @@ fn fzf_args(exe: &str, state: &str, since: Option<&str>) -> Vec<String> {
         }
         c
     };
+    let mut search_cmd = format!("\"{exe}\" --search '{{q}}' --state \"{state}\"");
+    if let Some(s) = since {
+        search_cmd.push_str(&format!(" --since {s}"));
+    }
     vec![
         "--delimiter=\t".to_string(),
         "--with-nth=4".to_string(),
@@ -479,10 +493,11 @@ fn fzf_args(exe: &str, state: &str, since: Option<&str>) -> Vec<String> {
         "--reverse".to_string(),
         "--tiebreak=index".to_string(),
         "--prompt=hxr> ".to_string(),
-        format!("--preview=\"{exe}\" --preview {{2}} {{1}}"),
+        format!("--preview=\"{exe}\" --preview {{2}} {{1}} --state \"{state}\""),
         "--preview-window=right:55%:wrap".to_string(),
         format!("--bind=tab:reload({})", cycle_cmd("next")),
         format!("--bind=btab:reload({})", cycle_cmd("prev")),
+        format!("--bind=ctrl-g:reload({search_cmd})"),
     ]
 }
 
@@ -567,6 +582,38 @@ fn first_message(s: &Session) -> Option<String> {
     adapter::util::first_user_text(&head, tag)
 }
 
+/// Print the picker feed for `tab` (None = merged) honoring the in-picker
+/// content-search pattern: 2 header lines + formatted session lines.
+fn emit_feed(
+    tab: Option<&str>,
+    names: &[String],
+    grep: Option<&str>,
+    since: Option<&str>,
+    include_all: bool,
+) -> Result<()> {
+    let detected = discover(tab, include_all);
+    let mut sessions = flatten(&detected);
+    if let Some(s) = since {
+        let ms =
+            ui::parse_since(s).context("hxr: bad --since value (try 30d, 2w, 48h, 15m, 90s)")?;
+        apply_since(&mut sessions, Some(Ok(ms)))?;
+    }
+    if let Some(pat) = grep {
+        apply_grep(&mut sessions, &detected, pat)?;
+    }
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in ui::feed_header(names, tab, grep)
+        .into_iter()
+        .chain(ui::format_lines(&sessions, tab.is_none()))
+    {
+        if writeln!(out, "{line}").is_err() {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// Write `text` through $PAGER when stdout is a terminal, else plain print.
 fn page(text: String) -> Result<()> {
     use std::io::IsTerminal;
@@ -602,13 +649,14 @@ fn cap(s: &str, lines: usize, chars: usize) -> String {
 }
 
 /// Line 1: active tab ("all" or harness name). Line 2: tab names.
-fn write_state(path: &std::path::Path, current: &str, names: &[String]) {
-    let _ = std::fs::write(path, format!("{current}\n{}", names.join(" ")));
+/// Line 3: content-search pattern (empty = metadata mode).
+fn write_state(path: &std::path::Path, current: &str, names: &[String], grep: &str) {
+    let _ = std::fs::write(path, format!("{current}\n{}\n{grep}", names.join(" ")));
 }
 
-fn read_state(path: &str) -> (String, Vec<String>) {
+fn read_state(path: &str) -> (String, Vec<String>, String) {
     let Ok(content) = std::fs::read_to_string(path) else {
-        return ("all".to_string(), Vec::new());
+        return ("all".to_string(), Vec::new(), String::new());
     };
     let mut lines = content.lines();
     let current = lines.next().unwrap_or("all").trim().to_string();
@@ -618,7 +666,16 @@ fn read_state(path: &str) -> (String, Vec<String>) {
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    (current, names)
+    let grep = lines.next().unwrap_or("").trim().to_string();
+    (current, names, grep)
+}
+
+fn tab_of(name: &str) -> Option<&str> {
+    (name != "all").then_some(name)
+}
+
+fn nonempty(s: &str) -> Option<&str> {
+    (!s.is_empty()).then_some(s)
 }
 
 /// Pure cycle math over `["all", names...]`; `dir` is "next" or "prev".

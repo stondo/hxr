@@ -49,6 +49,9 @@ brew install stondo/tap/hxr-picker   # macOS / Linuxbrew
 ```sh
 hxr                  # pick a session (fzf), resume it in its directory
 hxr                  #   Tab = next harness tab · Shift+Tab = previous
+hxr                  #   Ctrl-G = search inside conversations for the typed
+hxr                  #   query (content mode; header shows the pattern;
+hxr                  #   Ctrl-G on an empty query returns to metadata mode)
 hxr --harness codex  # start on a specific tab
 hxr --since 7d       # only sessions newer than a duration (s/m/h/d/w)
 hxr -G <pattern>     # content search: keep sessions whose conversation
@@ -60,6 +63,13 @@ hxr --list [name]    # dump TSV lines (id, harness, cwd, display) — no fzf nee
 hxr --session <id-prefix> --print-cmd   # resolve without fzf, print resume cmd
 hxr -- --model x     # args after -- pass through to the harness CLI
 ```
+
+In the picker, typing fuzzy-filters what is on screen (instant). Ctrl-G
+submits the typed query to the content engine: one deliberate scan
+(~0.2s), sessions whose conversation bodies match replace the list, tab
+cycling stays inside content mode, and the preview pane shows match
+snippets. Patterns are Rust regex; note the in-picker bind cannot carry
+apostrophes (use `-G` for those).
 
 ### Content search (`-G`)
 
