@@ -74,7 +74,7 @@ jobs:
             -n "Binaries for linux (amd64 static musl, arm64) and macOS (arm64, amd64). Install: cargo install hxr-picker, brew install stondo/tap/hxr-picker, or grab a tarball from the assets. hxr needs fzf."
       - name: update homebrew tap
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
           fetch_sha() { grep "hxr-picker-${VER}-$1.tar.gz" dist/SHA256SUMS | awk '{print $1}'; }
@@ -82,9 +82,7 @@ jobs:
           MAC_X86=$(fetch_sha x86_64-apple-darwin)
           LIN_ARM=$(fetch_sha aarch64-unknown-linux-gnu)
           LIN_X86=$(fetch_sha x86_64-unknown-linux-musl)
-          gh repo clone stondo/homebrew-tap tap -- --depth 1 || gh repo create stondo/homebrew-tap --public --clone tap
-          mkdir -p tap/Formula
-          cat > tap/Formula/hxr-picker.rb <<EOF
+          cat > formula.rb <<EOF
           class HxrPicker < Formula
             desc "One fzf picker for every coding-agent CLI: list and resume sessions across opencode, Claude Code, Codex, pi, omp, Qwen Code, Kimi, Copilot CLI and reasonix"
             homepage "https://github.com/stondo/hxr"
@@ -104,10 +102,10 @@ jobs:
             end
 
             on_linux do
-              if Hardware::CPU.arm? && !Hardware::CPU.is_64_bit?
-                odie "hxr-picker prebuilt bottles are arm64-only on Linux; install with cargo instead"
-              end
-              if Hardware::CPU.arm?
+              if Hardware::CPU.intel?
+                url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-x86_64-unknown-linux-musl.tar.gz"
+                sha256 "${LIN_X86}"
+              elsif Hardware::CPU.arm?
                 url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${LIN_ARM}"
               end
@@ -124,6 +122,13 @@ jobs:
             end
           end
           EOF
-          cd tap && git add -A && git -c user.name="stondo" \
-            -c user.email="2782294+stondo@users.noreply.github.com" \
-            commit -m "hxr-picker ${VER}" && git push
+          # strip the two-space indent the heredoc inherits from the YAML block
+          sed -i 's/^  //' formula.rb
+          CONTENT=$(base64 -w0 formula.rb)
+          SHA=$(gh api repos/stondo/homebrew-tap/contents/Formula/hxr-picker.rb --jq .sha 2>/dev/null || true)
+          ARGS=(--field message="hxr-picker ${VER}"
+                --field content="$CONTENT"
+                -f "committer.name=stondo"
+                -f "committer.email=2782294+stondo@users.noreply.github.com")
+          if [ -n "$SHA" ]; then ARGS+=(--field sha="$SHA"); fi
+          gh api -X PUT repos/stondo/homebrew-tap/contents/Formula/hxr-picker.rb "${ARGS[@]}" --jq .content.path
