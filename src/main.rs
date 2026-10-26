@@ -130,6 +130,11 @@ fn main() -> Result<()> {
                 {
                     session.extra.insert("match".to_string(), snip);
                 }
+                if let Some(h) = detected.first().map(|d| d.harness.as_ref())
+                    && let Some(st) = h.stats(&session)
+                {
+                    session.extra.extend(st);
+                }
                 print!("{}", render_preview(&session));
             }
             None => println!("(no {harness} session {id})"),

@@ -68,6 +68,15 @@ impl Harness for Reasonix {
         let path = session.extra.get("path")?;
         util::jsonl_content_match(std::path::Path::new(path), pat)
     }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::render_jsonl(std::path::Path::new(path), |v| {
+            let role = v.get("role")?.as_str()?.to_string();
+            let text = v.get("content")?.as_str()?.to_string();
+            Some((role, text))
+        })
+    }
 }
 
 fn transcribe(meta_path: &Path, name: &str, root: &Path) -> Option<Session> {

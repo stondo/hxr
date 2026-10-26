@@ -18,7 +18,8 @@ tab next · shift-tab prev · enter resume · esc cancel
 
 - **One merged list**, newest first, with 2-char harness tags — or per-harness
   tabs cycled with **Tab / Shift+Tab** (only installed harnesses appear)
-- **Preview pane**: first user message, model, git branch, turns, cost
+- **Preview pane**: first user message, model, git branch, turns, cost, token totals (codex, kimi)
+- **`hxr show`**: render a session transcript read-only through `$PAGER`
 - **Right resume semantics** per harness: correct CLI flag, correct working
   directory (`claude -r <id>`, `codex resume <uuid>`, `pi --session <path>`,
   `omp -r <id>`, `qwen -r <id>`, `reasonix -r <path> --dir <ws>`, …)
@@ -38,8 +39,9 @@ tab next · shift-tab prev · enter resume · esc cancel
 
 ```sh
 cargo install hxr-picker        # installs the `hxr` command
-# or from a checkout
-cargo build --release && cp target/release/hxr ~/.local/bin/
+brew install stondo/tap/hxr-picker   # macOS / Linuxbrew
+# or grab a static binary from the releases page:
+# https://github.com/stondo/hxr/releases (linux amd64/arm64, macOS amd64/arm64)
 ```
 
 ## Usage

@@ -1,0 +1,131 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            setup: sudo apt-get update && sudo apt-get install -y musl-tools
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            setup: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            setup: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            setup: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: install musl tools
+        if: matrix.setup != ''
+        run: ${{ matrix.setup }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: package
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          STAGE="hxr-picker-${VER}-${{ matrix.target }}"
+          mkdir -p "dist/${STAGE}"
+          cp "target/${{ matrix.target }}/release/hxr" "dist/${STAGE}/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "dist/${STAGE}/"
+          tar -czf "dist/${STAGE}.tar.gz" -C dist "${STAGE}"
+          rm -rf "dist/${STAGE}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hxr-picker-${{ matrix.target }}
+          path: dist/*.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --title "hxr-picker ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            -n "Binaries for linux (amd64 static musl, arm64) and macOS (arm64, amd64). \
+  Install: cargo install hxr-picker, or brew install stondo/tap/hxr-picker, \
+  or grab a tarball from the assets. hxr needs fzf."
+      - name: update homebrew tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          fetch_sha() { grep "hxr-picker-${VER}-$1.tar.gz" dist/SHA256SUMS | awk '{print $1}'; }
+          MAC_ARM=$(fetch_sha aarch64-apple-darwin)
+          MAC_X86=$(fetch_sha x86_64-apple-darwin)
+          LIN_ARM=$(fetch_sha aarch64-unknown-linux-gnu)
+          LIN_X86=$(fetch_sha x86_64-unknown-linux-musl)
+          gh repo clone stondo/homebrew-tap tap -- --depth 1 || gh repo create stondo/homebrew-tap --public --clone tap
+          mkdir -p tap/Formula
+          cat > tap/Formula/hxr-picker.rb <<EOF
+          class HxrPicker < Formula
+            desc "One fzf picker for every coding-agent CLI: list and resume sessions across opencode, Claude Code, Codex, pi, omp, Qwen Code, Kimi, Copilot CLI and reasonix"
+            homepage "https://github.com/stondo/hxr"
+            url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-x86_64-unknown-linux-musl.tar.gz"
+            sha256 "${LIN_X86}"
+            version "${VER}"
+            license any_of: ["MIT", "Apache-2.0"]
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-aarch64-apple-darwin.tar.gz"
+                sha256 "${MAC_ARM}"
+              else
+                url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-x86_64-apple-darwin.tar.gz"
+                sha256 "${MAC_X86}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm? && !Hardware::CPU.is_64_bit?
+                odie "hxr-picker prebuilt bottles are arm64-only on Linux; install with cargo instead"
+              end
+              if Hardware::CPU.arm?
+                url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${LIN_ARM}"
+              end
+            end
+
+            def install
+              bin.install "hxr"
+            end
+
+            def caveats
+              <<~EOS
+                hxr requires fzf: brew install fzf
+              EOS
+            end
+          end
+          EOF
+          cd tap && git add -A && git -c user.name="stondo" \
+            -c user.email="2782294+stondo@users.noreply.github.com" \
+            commit -m "hxr-picker ${VER}" && git push

@@ -53,6 +53,13 @@ pub trait Harness: Send + Sync {
     fn render(&self, _session: &Session) -> Option<String> {
         None
     }
+
+    /// Usage stats for the preview pane ((key, value) pairs, e.g. tokens).
+    /// None when the adapter does not compute stats. Called only for the
+    /// highlighted session, so implementations may do bounded extra I/O.
+    fn stats(&self, _session: &Session) -> Option<std::collections::BTreeMap<String, String>> {
+        None
+    }
 }
 
 /// Adapter registry in tab order. `include_all` is `--all`: also list

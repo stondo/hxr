@@ -164,6 +164,14 @@ fn all_adapters_read_fixtures() {
          summary: commit everything and push\n",
     );
 
+    // --- omp main transcript sibling file (line 1 title, line 2 session meta)
+    write(
+        &home.join(".omp/agent/sessions/-tmp--/2026-01-01T00-00-00-000Z_omp1.jsonl"),
+        "{\"type\":\"title\",\"title\":\"OMP fixture\"}\n\
+         {\"type\":\"session\",\"version\":\"3\",\"id\":\"omp1\",\"cwd\":\"/tmp/omp\"}\n\
+         {\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"needleOMPmain ask\"}}\n",
+    );
+
     // --- kimi: session index + wire event streams
     let km_dir = home.join(".kimi-code/sessions/wd_demo_ab12/session_k1");
     write(
@@ -172,7 +180,9 @@ fn all_adapters_read_fixtures() {
          {\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"kimi ask\\nsecond line\"}]}\n\
          {\"type\":\"llm.request\",\"model\":\"k3\"}\n\
          {\"type\":\"turn.prompt\",\"input\": [{\"type\":\"text\",\"text\":\"later needleKI turn\"}]}\n\
-         {\"type\":\"agent.message.appended\",\"message\":{\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kimi rendered turn\"}]}}}\n",
+         {\"type\":\"agent.message.appended\",\"message\":{\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kimi rendered turn\"}]}}}\n\
+         {\"type\":\"usage.record\",\"usage\":{\"inputOther\":100,\"output\":10,\"inputCacheRead\":50,\"inputCacheCreation\":0}}\n\
+         {\"type\":\"usage.record\",\"usage\":{\"inputOther\":40,\"output\":20,\"inputCacheRead\":0,\"inputCacheCreation\":0}}\n",
     );
     write(
         &home.join(".kimi-code/session_index.jsonl"),
@@ -189,7 +199,8 @@ fn all_adapters_read_fixtures() {
     );
     write(
         &home.join(".reasonix/sessions/demo.jsonl"),
-        "{\"type\":\"user\",\"text\":\"needleRX in transcript\"}\n",
+        "{\"role\":\"user\",\"content\":\"needleRX in transcript\"}\n\
+         {\"role\":\"assistant\",\"content\":\"reasonix rendered reply\"}\n",
     );
     write(
         &home.join(".reasonix/sessions/gone__archive_1.meta.json"),
@@ -319,7 +330,24 @@ fn all_adapters_read_fixtures() {
         );
         assert!(cm("codex", find(&cx, "t1"), "needleCX").is_some());
         assert!(cm("pi", find(&pi, "pid1"), "pi ask").is_some());
-        assert!(cm("omp", find(&om, "omp1"), "needleOMP").is_some());
+        assert!(cm("omp", find(&om, "omp1"), "needleOMPmain").is_some());
+        assert!(
+            cm("omp", find(&om, "omp1"), "needleOMP").is_some(),
+            "prompts still searched"
+        );
+        assert!(rd("omp", find(&om, "omp1")).unwrap().contains("[user]"));
+        assert!(
+            rd("reasonix", find(&rx, "demo"))
+                .unwrap()
+                .contains("reasonix rendered reply")
+        );
+        let kstats = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "kimi")
+            .unwrap()
+            .stats(find(&km, "session_k1"))
+            .expect("kimi stats");
+        assert_eq!(kstats.get("tokens").map(String::as_str), Some("220"));
         assert!(cm("qwen", find(&qw, "q1"), "qwen ask").is_some());
         assert!(cm("kimi", find(&km, "session_k1"), "needleKI").is_some());
         assert!(cm("reasonix", find(&rx, "demo"), "needleRX").is_some());

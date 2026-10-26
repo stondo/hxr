@@ -82,6 +82,37 @@ impl Harness for Kimi {
             util::extract_message_envelope(v.get("message")?)
         })
     }
+
+    fn stats(&self, session: &Session) -> Option<std::collections::BTreeMap<String, String>> {
+        let path = session.extra.get("path")?;
+        use std::io::BufRead;
+        let file = std::fs::File::open(path).ok()?;
+        let mut tokens: i64 = 0;
+        for line in std::io::BufReader::new(file).lines() {
+            let Ok(line) = line else { continue };
+            if !line.contains("\"usage\"") {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if v.get("type").and_then(|t| t.as_str()) != Some("usage.record") {
+                continue;
+            }
+            let u = v.get("usage")?;
+            for key in [
+                "inputOther",
+                "output",
+                "inputCacheRead",
+                "inputCacheCreation",
+            ] {
+                tokens += u.get(key).and_then(|n| n.as_i64()).unwrap_or(0);
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        out.insert("tokens".to_string(), tokens.to_string());
+        Some(out)
+    }
 }
 
 fn transcribe(id: &str, session_dir: &Path, work_dir: &Path) -> Option<Session> {

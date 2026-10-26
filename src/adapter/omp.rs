@@ -30,6 +30,26 @@ struct Hist {
     last_created: i64,
 }
 
+/// The main transcript for an omp session: a sibling file
+/// `sessions/<project>/<ts>_<id>.jsonl` (line 1 title, line 2 session meta).
+fn main_transcript(session_id: &str) -> Option<PathBuf> {
+    let root = super::home_dir().ok()?.join(".omp/agent/sessions");
+    let suffix = format!("_{session_id}.jsonl");
+    for proj in std::fs::read_dir(&root).ok()?.flatten() {
+        let proj_path = proj.path();
+        if !proj_path.is_dir() {
+            continue;
+        }
+        for f in std::fs::read_dir(&proj_path).ok()?.flatten() {
+            let name = f.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.ends_with(&suffix) {
+                return Some(f.path());
+            }
+        }
+    }
+    None
+}
 impl Harness for Omp {
     fn name(&self) -> &'static str {
         "omp"
@@ -128,6 +148,11 @@ impl Harness for Omp {
     }
 
     fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
+        if let Some(main) = main_transcript(&session.id)
+            && let Some(hit) = util::jsonl_content_match(&main, pat)
+        {
+            return Some(hit);
+        }
         let home = super::home_dir().ok()?;
         let db = home.join(".omp").join("agent").join("history.db");
         let conn =
@@ -158,5 +183,51 @@ impl Harness for Omp {
             }
         }
         None
+    }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        if let Some(main) = main_transcript(&session.id)
+            && let Some(text) = util::render_jsonl(&main, util::extract_message_envelope)
+        {
+            return Some(text);
+        }
+        // no main transcript: render any subagent wires filed under this id
+        // in sessions/<project>/<ts>_<id>/, labeled per file.
+        let root = super::home_dir().ok()?.join(".omp/agent/sessions");
+        let suffix = format!("_{}", session.id);
+        let mut dir = None;
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for proj in entries.flatten() {
+                let proj_path = proj.path();
+                if !proj_path.is_dir() {
+                    continue;
+                }
+                if let Ok(sess) = std::fs::read_dir(&proj_path) {
+                    for d in sess.flatten() {
+                        let name = d.file_name();
+                        let Some(name) = name.to_str() else { continue };
+                        if name.ends_with(&suffix) {
+                            dir = Some(d.path());
+                        }
+                    }
+                }
+            }
+        }
+        let dir = dir?;
+        let mut out = String::new();
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+            .collect();
+        files.sort();
+        for f in files {
+            let label = f.file_stem()?.to_string_lossy();
+            if let Some(text) = util::render_jsonl(&f, util::extract_message_envelope) {
+                out.push_str(&format!("=== {label} ===\n\n{text}"));
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 }
