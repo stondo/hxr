@@ -68,7 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" \
             --verify-tag --title "hxr-picker ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             -n "Binaries for linux (amd64 static musl, arm64) and macOS (arm64, amd64). Install: cargo install hxr-picker, brew install stondo/tap/hxr-picker, or grab a tarball from the assets. hxr needs fzf."
