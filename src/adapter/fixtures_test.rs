@@ -46,7 +46,7 @@ fn find<'a>(sessions: &'a [Session], id: &str) -> &'a Session {
 }
 
 fn run_adapter(name: &str) -> Vec<Session> {
-    registry()
+    registry(false)
         .into_iter()
         .find(|h| h.name() == name)
         .unwrap_or_else(|| panic!("no adapter {name}"))
@@ -111,9 +111,9 @@ fn all_adapters_read_fixtures() {
             "CREATE TABLE threads (id TEXT, rollout_path TEXT, created_at INTEGER,
              updated_at INTEGER, cwd TEXT, title TEXT, first_user_message TEXT,
              updated_at_ms INTEGER, recency_at INTEGER, archived INTEGER,
-             model TEXT, git_branch TEXT);
-             INSERT INTO threads VALUES ('t1','/r1',100,200,'/tmp/cx1','T One','hello world',2000,2000,0,'m1','main');
-             INSERT INTO threads VALUES ('t2','/r2',100,200,'/tmp/cx2','','fum title',1000,1000,0,NULL,NULL);",
+             model TEXT, git_branch TEXT, tokens_used INTEGER);
+             INSERT INTO threads VALUES ('t1','/r1',100,200,'/tmp/cx1','T One','hello world',2000,2000,0,'m1','main',4242);
+             INSERT INTO threads VALUES ('t2','/r2',100,200,'/tmp/cx2','','fum title',1000,1000,0,NULL,NULL,NULL);",
         )
         .unwrap();
         c.execute(
@@ -151,6 +151,19 @@ fn all_adapters_read_fixtures() {
         "{\"sessionId\":\"q1\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"type\":\"user\",\"cwd\":\"/tmp/qw\",\"gitBranch\":\"main\",\"message\":{\"role\":\"user\",\"parts\":[{\"text\":\"qwen ask\"}]}}\n",
     );
 
+    // --- copilot: workspace.yaml session dirs
+    let cp_dir = home.join(".copilot/session-state/9d03122e-4b92-497b-b805-7b67332ae777");
+    write(
+        &cp_dir.join("workspace.yaml"),
+        "id: 9d03122e-4b92-497b-b805-7b67332ae777\n\
+         cwd: /tmp/cp\n\
+         branch: main\n\
+         created_at: 2026-05-07T22:11:44.339Z\n\
+         updated_at: 2026-05-07T22:11:44.522Z\n\
+         name: commit everything and push\n\
+         summary: commit everything and push\n",
+    );
+
     // --- kimi: session index + wire event streams
     let km_dir = home.join(".kimi-code/sessions/wd_demo_ab12/session_k1");
     write(
@@ -158,7 +171,8 @@ fn all_adapters_read_fixtures() {
         "{\"type\":\"metadata\",\"protocol_version\":\"1.5\",\"created_at\":100}\n\
          {\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"kimi ask\\nsecond line\"}]}\n\
          {\"type\":\"llm.request\",\"model\":\"k3\"}\n\
-         {\"type\":\"turn.prompt\",\"input\": [{\"type\":\"text\",\"text\":\"later needleKI turn\"}]}\n",
+         {\"type\":\"turn.prompt\",\"input\": [{\"type\":\"text\",\"text\":\"later needleKI turn\"}]}\n\
+         {\"type\":\"agent.message.appended\",\"message\":{\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kimi rendered turn\"}]}}}\n",
     );
     write(
         &home.join(".kimi-code/session_index.jsonl"),
@@ -219,12 +233,16 @@ fn all_adapters_read_fixtures() {
             "fum title",
             "empty title falls back to first_user_message"
         );
+        assert_eq!(
+            find(&cx, "t1").extra.get("tokens").map(String::as_str),
+            Some("4242")
+        );
 
         let pi = run_adapter("pi");
         let p = find(&pi, "pid1");
         assert_eq!(p.title, "pi ask");
         assert_eq!(p.cwd, Path::new("/tmp/pi"));
-        let (argv, cwd) = registry()
+        let (argv, cwd) = registry(false)
             .into_iter()
             .find(|h| h.name() == "pi")
             .unwrap()
@@ -253,12 +271,37 @@ fn all_adapters_read_fixtures() {
         assert_eq!(k.cwd, Path::new("/tmp/kimi"));
         assert_eq!(k.extra.get("model").map(String::as_str), Some("k3"));
 
+        let cp = run_adapter("copilot");
+        let c = find(&cp, "9d03122e-4b92-497b-b805-7b67332ae777");
+        assert_eq!(c.title, "commit everything and push");
+        assert_eq!(c.cwd, Path::new("/tmp/cp"));
+        assert!(c.updated_ms > 0);
+
+        // --- render (hxr show): file-backed adapters produce turns
+        let rd = |harness: &str, s: &Session| {
+            registry(false)
+                .into_iter()
+                .find(|h| h.name() == harness)
+                .unwrap()
+                .render(s)
+        };
+        assert!(
+            rd("claude", find(&cl, "11111111-1111-1111-1111-111111111111"))
+                .unwrap()
+                .contains("[user]")
+        );
+        assert!(
+            rd("kimi", find(&km, "session_k1"))
+                .unwrap()
+                .contains("[user]")
+        );
+
         // --- content search (-G): every adapter finds its needle
         let rx = run_adapter("reasonix");
         assert_eq!(rx.len(), 1, "__archive_ sessions must be filtered");
         let pat = |p: &str| crate::adapter::SearchPattern::new(p).unwrap();
         let cm = |harness: &str, s: &Session, p: &str| {
-            registry()
+            registry(false)
                 .into_iter()
                 .find(|h| h.name() == harness)
                 .unwrap()

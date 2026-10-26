@@ -46,6 +46,14 @@ struct Cli {
     #[arg(short = 'G', long = "grep")]
     grep: Option<String>,
 
+    /// Print the session transcript instead of resuming it
+    #[arg(long)]
+    show: bool,
+
+    /// Also list child/subagent sessions (opencode today)
+    #[arg(long)]
+    all: bool,
+
     /// Internal: advance the tab cycle in the state file and print the feed
     /// (hidden; used by fzf reload bindings).
     #[arg(long, hide = true)]
@@ -82,7 +90,7 @@ fn main() -> Result<()> {
     if cli.detect {
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
-        for d in discover(None) {
+        for d in discover(None, cli.all) {
             if writeln!(
                 out,
                 "{:<10} {:>5} sessions",
@@ -108,7 +116,7 @@ fn main() -> Result<()> {
         && args.len() == 2
     {
         let (harness, id) = (&args[0], &args[1]);
-        let detected = discover(Some(harness));
+        let detected = discover(Some(harness), false);
         match detected
             .first()
             .and_then(|d| d.sessions.iter().find(|s| &s.id == id))
@@ -141,7 +149,7 @@ fn main() -> Result<()> {
         } else {
             Some(target.as_str())
         };
-        let detected = discover(tab);
+        let detected = discover(tab, cli.all);
         let mut sessions = flatten(&detected);
         apply_since(&mut sessions, since_ms)?;
         let stdout = std::io::stdout();
@@ -163,7 +171,7 @@ fn main() -> Result<()> {
             .harness
             .clone()
             .or_else(|| cli.list.clone().filter(|l| !l.eq_ignore_ascii_case("all")));
-        let detected = discover(scope.as_deref());
+        let detected = discover(scope.as_deref(), cli.all);
         check_detected(&detected, scope.as_deref())?;
         let mut sessions = flatten(&detected);
         apply_since(&mut sessions, since_ms)?;
@@ -186,11 +194,11 @@ fn main() -> Result<()> {
     // land anywhere); only --session resolution may stay scoped.
     let (detected, initial_tab): (Vec<Detected>, Option<String>) = if cli.session.is_some() {
         let scope = cli.harness.as_ref().map(|h| h.to_lowercase());
-        let detected = discover(scope.as_deref());
+        let detected = discover(scope.as_deref(), cli.all);
         check_detected(&detected, scope.as_deref())?;
         (detected, None)
     } else {
-        let detected = discover(None);
+        let detected = discover(None, cli.all);
         check_detected(&detected, None)?;
         let tab = cli.harness.as_ref().map(|h| h.to_lowercase());
         (detected, tab)
@@ -247,6 +255,19 @@ fn main() -> Result<()> {
         .find(|d| d.harness.name() == session.harness)
         .map(|d| &d.harness)
         .context("hxr: selected harness disappeared")?;
+
+    if cli.show {
+        let text = h.render(&session).unwrap_or_else(|| {
+            format!(
+                "(no transcript renderer for {} yet)\n\nhxr show metadata:\n{}",
+                session.harness,
+                render_preview(&session)
+            )
+        });
+        page(text)?;
+        return Ok(());
+    }
+
     let (argv, cwd) = h.resume(&session, &cli.extra);
 
     if cli.print_cmd {
@@ -343,9 +364,9 @@ fn session_hit(
 /// Detection rule: binary on PATH and discover() yields >= 1 session.
 /// `scope` limits discovery to a single harness (used by --harness/--list);
 /// adapters still run concurrently and in registry (tab) order.
-fn discover(scope: Option<&str>) -> Vec<Detected> {
+fn discover(scope: Option<&str>, include_all: bool) -> Vec<Detected> {
     use rayon::prelude::*;
-    registry()
+    registry(include_all)
         .into_par_iter()
         .filter(|h| scope.is_none_or(|s| h.name() == s.to_lowercase()))
         .filter_map(|harness| {
@@ -503,6 +524,7 @@ fn render_preview(s: &Session) -> String {
         ("model", "model"),
         ("turns", "turnCount"),
         ("cost", "totalCostUsd"),
+        ("tokens", "tokens"),
     ] {
         if let Some(v) = s.extra.get(key) {
             let _ = writeln!(out, "{label:<9} {v}");
@@ -538,6 +560,28 @@ fn first_message(s: &Session) -> Option<String> {
     };
     let head = adapter::util::read_jsonl_head(std::path::Path::new(path), 64 * 1024);
     adapter::util::first_user_text(&head, tag)
+}
+
+/// Write `text` through $PAGER when stdout is a terminal, else plain print.
+fn page(text: String) -> Result<()> {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        print!("{text}");
+        return Ok(());
+    }
+    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".to_string());
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(&pager)
+        .stdin(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("hxr: starting pager {pager:?}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    child.wait()?;
+    Ok(())
 }
 
 /// Cap text to at most `lines` lines / `chars` characters, ellipsized.

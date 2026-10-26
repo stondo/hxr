@@ -66,6 +66,11 @@ impl Harness for Pi {
         let path = session.extra.get("path")?;
         util::jsonl_content_match(std::path::Path::new(path), pat)
     }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::render_jsonl(std::path::Path::new(path), util::extract_message_envelope)
+    }
 }
 
 fn transcribe(path: &Path) -> Option<Session> {

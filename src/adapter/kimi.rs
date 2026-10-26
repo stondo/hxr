@@ -72,6 +72,16 @@ impl Harness for Kimi {
         let path = session.extra.get("path")?;
         util::jsonl_content_match(std::path::Path::new(path), pat)
     }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::render_jsonl(std::path::Path::new(path), |v| {
+            if v.get("type").and_then(|t| t.as_str()) != Some("agent.message.appended") {
+                return None;
+            }
+            util::extract_message_envelope(v.get("message")?)
+        })
+    }
 }
 
 fn transcribe(id: &str, session_dir: &Path, work_dir: &Path) -> Option<Session> {

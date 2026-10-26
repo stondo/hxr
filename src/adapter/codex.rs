@@ -56,6 +56,28 @@ impl Harness for Codex {
         let path = session.extra.get("path")?;
         util::jsonl_content_match(std::path::Path::new(path), pat)
     }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        let path = session.extra.get("path")?;
+        util::render_jsonl(std::path::Path::new(path), |v| {
+            if v.get("type").and_then(|t| t.as_str()) != Some("response_item") {
+                return None;
+            }
+            let payload = v.get("payload")?;
+            if payload.get("type").and_then(|t| t.as_str()) != Some("message") {
+                return None;
+            }
+            let role = payload.get("role")?.as_str()?.to_string();
+            let text = payload
+                .get("content")?
+                .as_array()?
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some((role, text))
+        })
+    }
 }
 
 /// Highest-versioned `state_*.sqlite` under the codex root.
@@ -87,7 +109,7 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, cwd, coalesce(nullif(title, ''), substr(first_user_message, 1, 120)), \
          coalesce(updated_at_ms, updated_at * 1000, recency_at * 1000, created_at * 1000), \
-         substr(first_user_message, 1, 600), model, git_branch, rollout_path \
+         substr(first_user_message, 1, 600), model, git_branch, rollout_path, tokens_used \
          FROM threads WHERE coalesce(archived, 0) = 0",
     )?;
 
@@ -100,12 +122,16 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
         let model: Option<String> = r.get(5)?;
         let branch: Option<String> = r.get(6)?;
         let rollout: Option<String> = r.get(7)?;
-        Ok((id, cwd, title, updated, first_msg, model, branch, rollout))
+        let tokens: Option<i64> = r.get(8)?;
+        Ok((
+            id, cwd, title, updated, first_msg, model, branch, rollout, tokens,
+        ))
     })?;
 
     let mut sessions = Vec::new();
     for row in rows {
-        let Ok((id, cwd, title, updated_ms, first_msg, model, branch, rollout)) = row else {
+        let Ok((id, cwd, title, updated_ms, first_msg, model, branch, rollout, tokens)) = row
+        else {
             continue;
         };
         let mut extra = std::collections::BTreeMap::new();
@@ -120,6 +146,11 @@ fn from_state_db(db: &Path) -> Result<Vec<Session>> {
         }
         if let Some(p) = rollout {
             extra.insert("path".to_string(), p);
+        }
+        if let Some(t) = tokens
+            && t > 0
+        {
+            extra.insert("tokens".to_string(), t.to_string());
         }
         sessions.push(Session {
             id,

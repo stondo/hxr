@@ -68,6 +68,7 @@ pub fn tag(harness: &str) -> String {
         "omp" => "om",
         "qwen" => "qw",
         "kimi" => "ki",
+        "copilot" => "cp",
         "reasonix" => "rx",
         other => return other.chars().take(2).collect(),
     }

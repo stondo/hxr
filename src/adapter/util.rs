@@ -153,6 +153,49 @@ pub(crate) fn jsonl_content_match(path: &Path, pat: &super::SearchPattern) -> Op
     None
 }
 
+/// Render a JSONL transcript for `hxr show`: per line, `extract` returns
+/// Some((role, text)) for chat turns; output is `[role] text` blocks with
+/// each turn capped for readability.
+pub(crate) fn render_jsonl(
+    path: &Path,
+    extract: impl Fn(&Value) -> Option<(String, String)>,
+) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    let mut out = String::new();
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some((role, text)) = extract(&v) else {
+            continue;
+        };
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let text = if text.chars().count() > 2000 {
+            let mut t: String = text.chars().take(1999).collect();
+            t.push('…');
+            t
+        } else {
+            text.to_string()
+        };
+        out.push_str(&format!("[{role}]\n{text}\n\n"));
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// Extractor family: entries carrying `.message {role, content|parts}`
+/// (claude, pi, qwen).
+pub(crate) fn extract_message_envelope(v: &Value) -> Option<(String, String)> {
+    let msg = v.get("message")?;
+    let role = msg.get("role")?.as_str()?.to_string();
+    let text = text_from_message(msg)?;
+    Some((role, text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

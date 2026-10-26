@@ -51,6 +51,8 @@ hxr --harness codex  # start on a specific tab
 hxr --since 7d       # only sessions newer than a duration (s/m/h/d/w)
 hxr -G <pattern>     # content search: keep sessions whose conversation
                      #   bodies (or titles) match; snippets in the preview
+hxr --show           # print the transcript of the picked session ($PAGER)
+hxr --all            # include child/subagent sessions (opencode today)
 hxr --detect         # show detected harnesses + session counts
 hxr --list [name]    # dump TSV lines (id, harness, cwd, display) — no fzf needed
 hxr --session <id-prefix> --print-cmd   # resolve without fzf, print resume cmd
@@ -81,6 +83,7 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | omp | `~/.omp/agent/history.db` | `omp -r <id>` |
 | Qwen Code | `~/.qwen/projects/*/chats/*.jsonl` | `qwen -r <id>` |
 | Kimi | `~/.kimi-code/session_index.jsonl` + wire event streams | `kimi -S <id>` |
+| Copilot CLI | `~/.copilot/session-state/<uuid>/workspace.yaml` | `copilot -r <id>` |
 | reasonix | `~/.reasonix/sessions/*.meta.json` | `reasonix -r <path> --dir <ws>` |
 
 Format details, evidence and per-harness pitfalls live in

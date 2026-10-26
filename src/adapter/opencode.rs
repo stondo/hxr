@@ -17,7 +17,10 @@ use super::SearchPattern;
 use super::util;
 use crate::model::Session;
 
-pub struct Opencode;
+pub struct Opencode {
+    /// `--all`: also list child/subagent sessions (parent_id set).
+    pub include_children: bool,
+}
 
 impl Harness for Opencode {
     fn name(&self) -> &'static str {
@@ -44,19 +47,19 @@ impl Harness for Opencode {
         // exist (mirrors the UNION ALL minus ids already in session_v2).
         let parts: Vec<&str> = match (has_v2, has_v1) {
             (true, true) => vec![
-                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated \
-                 FROM session_v2 WHERE parent_id IS NULL AND time_archived IS NULL",
-                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated \
-                 FROM session WHERE parent_id IS NULL AND time_archived IS NULL \
+                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated, parent_id \
+                 FROM session_v2 WHERE time_archived IS NULL",
+                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated, parent_id \
+                 FROM session WHERE time_archived IS NULL \
                  AND id NOT IN (SELECT id FROM session_v2)",
             ],
             (true, false) => vec![
-                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated \
-                 FROM session_v2 WHERE parent_id IS NULL AND time_archived IS NULL",
+                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated, parent_id \
+                 FROM session_v2 WHERE time_archived IS NULL",
             ],
             (false, true) => vec![
-                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated \
-                 FROM session WHERE parent_id IS NULL AND time_archived IS NULL",
+                "SELECT id, directory, coalesce(nullif(title, ''), slug), time_updated, parent_id \
+                 FROM session WHERE time_archived IS NULL",
             ],
             _ => unreachable!(),
         };
@@ -64,7 +67,7 @@ impl Harness for Opencode {
         let mut sessions = Vec::new();
         let mut errors: Vec<anyhow::Error> = Vec::new();
         for sql in parts {
-            match collect(&conn, sql) {
+            match collect(&conn, sql, !self.include_children) {
                 Ok(mut rows) => sessions.append(&mut rows),
                 Err(e) => errors.push(e.context("opencode: query failed")),
             }
@@ -83,6 +86,54 @@ impl Harness for Opencode {
         let mut argv = vec!["opencode".to_string(), "-s".to_string(), session.id.clone()];
         argv.extend_from_slice(extra);
         (argv, session.cwd.clone())
+    }
+
+    fn render(&self, session: &Session) -> Option<String> {
+        let db = db_path().ok()?;
+        let conn =
+            Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.data, p.data FROM message m JOIN part p ON p.message_id = m.id \
+                 WHERE m.session_id = ?1 ORDER BY m.time_created, m.id, p.id",
+            )
+            .ok()?;
+        let rows = stmt
+            .query_map(rusqlite::params![session.id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .ok()?;
+        let mut out = String::new();
+        for (msg_json, part_json) in rows.flatten() {
+            let (Ok(mv), Ok(pv)) = (
+                serde_json::from_str::<serde_json::Value>(&msg_json),
+                serde_json::from_str::<serde_json::Value>(&part_json),
+            ) else {
+                continue;
+            };
+            if pv.get("type").and_then(|t| t.as_str()) != Some("text") {
+                continue;
+            }
+            let Some(role) = mv.get("role").and_then(|r| r.as_str()) else {
+                continue;
+            };
+            let Some(text) = pv.get("text").and_then(|t| t.as_str()) else {
+                continue;
+            };
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let text = if text.chars().count() > 2000 {
+                let mut t: String = text.chars().take(1999).collect();
+                t.push('…');
+                t
+            } else {
+                text.to_string()
+            };
+            out.push_str(&format!("[{role}]\n{text}\n\n"));
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn content_match(&self, session: &Session, pat: &SearchPattern) -> Option<String> {
@@ -176,7 +227,8 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
 }
 
 /// Tolerant row collector: individual broken rows are skipped.
-fn collect(conn: &Connection, sql: &str) -> Result<Vec<Session>> {
+/// `roots_only` drops child/subagent sessions (parent_id set).
+fn collect(conn: &Connection, sql: &str, roots_only: bool) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -184,13 +236,17 @@ fn collect(conn: &Connection, sql: &str) -> Result<Vec<Session>> {
             r.get::<_, String>(1)?,
             r.get::<_, Option<String>>(2)?,
             r.get::<_, i64>(3)?,
+            r.get::<_, Option<String>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let Ok((id, directory, title, updated)) = row else {
+        let Ok((id, directory, title, updated, parent)) = row else {
             continue; // skip malformed row
         };
+        if roots_only && parent.is_some() {
+            continue;
+        }
         let cwd = PathBuf::from(&directory);
         let mut extra = BTreeMap::new();
         extra.insert("directory".to_string(), directory);

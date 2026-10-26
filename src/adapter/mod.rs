@@ -7,6 +7,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod copilot;
 #[cfg(test)]
 mod fixtures_test;
 pub mod kimi;
@@ -45,18 +46,29 @@ pub trait Harness: Send + Sync {
     fn content_match(&self, _session: &Session, _pattern: &SearchPattern) -> Option<String> {
         None
     }
+
+    /// Transcript rendering (`hxr show`): the session's conversation as
+    /// `[role]
+    /// text` blocks, or None when the adapter cannot render transcripts.
+    fn render(&self, _session: &Session) -> Option<String> {
+        None
+    }
 }
 
-/// Adapter registry in tab order.
-pub fn registry() -> Vec<Box<dyn Harness>> {
+/// Adapter registry in tab order. `include_all` is `--all`: also list
+/// child/subagent sessions where an adapter distinguishes them.
+pub fn registry(include_all: bool) -> Vec<Box<dyn Harness>> {
     vec![
-        Box::new(opencode::Opencode),
+        Box::new(opencode::Opencode {
+            include_children: include_all,
+        }),
         Box::new(claude::Claude),
         Box::new(codex::Codex),
         Box::new(pi::Pi),
         Box::new(omp::Omp),
         Box::new(qwen::Qwen),
         Box::new(kimi::Kimi),
+        Box::new(copilot::Copilot),
         Box::new(reasonix::Reasonix),
     ]
 }
