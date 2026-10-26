@@ -73,7 +73,7 @@ impl Harness for Opencode {
             }
             return Ok(sessions);
         }
-        sessions.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
         Ok(sessions)
     }
 

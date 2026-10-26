@@ -241,7 +241,7 @@ fn check_detected(detected: &[Detected], scope: Option<&str>) -> Result<()> {
 /// Flatten in tab order, newest first overall (matches ocr ordering).
 fn flatten(detected: &[Detected]) -> Vec<Session> {
     let mut sessions: Vec<Session> = detected.iter().flat_map(|d| d.sessions.clone()).collect();
-    sessions.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
     sessions
 }
 
