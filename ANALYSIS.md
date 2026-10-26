@@ -16,6 +16,7 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
 | pi | `~/.pi/agent/sessions/<munged-cwd>/<ts>_<uuid>.jsonl` (65 files) | line-1 `id` | line-1 `cwd` | first user `message` in file | file mtime | `pi --session <path\|id>` from session cwd |
 | omp | `~/.omp/agent/history.db`: `session_titles` ⋈ `history` (11 titled sessions) | `session_id` | latest `history.cwd` for session | `session_titles.title` | `session_titles.updated_at` / `history.created_at` (s) | `omp -r <id-prefix\|path>` from session cwd |
 | qwen | `~/.qwen/projects/<munged-cwd>/chats/<uuid>.jsonl` (106) + sibling `.runtime.json`; `qwen sessions list --json` exists as alternative index | chats filename / line-1 `sessionId` | line-1 `cwd` / runtime `work_dir` | first user msg in jsonl | file mtime / runtime `started_at` | `qwen -r <id>` from original cwd |
+| kimi | `~/.kimi-code/session_index.jsonl` (`sessionId`/`sessionDir`/`workDir`) + `<sessionDir>/agents/main/wire.jsonl` event streams (192) | index `sessionId` (`session_<uuid>`) | index `workDir` | first `turn.prompt` entry's `input[].text`; model from first `llm.request` | wire.jsonl mtime | `kimi -S <id>` from workDir |
 | reasonix | `~/.reasonix/sessions/<name>.jsonl` + sibling `.meta.json` (7) | file path (session "name", e.g. `code-local-ai`) | `meta.workspace` | `meta.summary` (may be long — truncate) | file mtime | `reasonix -r <path> --dir <workspace>` |
 
 ## Per-harness evidence and details

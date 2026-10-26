@@ -8,7 +8,7 @@ session — across every harness you have installed — and resume it in the rig
 directory with the right command.
 
 ```
-[all]  opencode  claude  codex  pi  omp  qwen  reasonix
+[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix
 tab next · shift-tab prev · enter resume · esc cancel
 ──────────────────────────────────────────────────────────────
   12 min ago   [oc] Adopt froggeric v22.5…   ~/PARA/Projects/local-ai
@@ -68,6 +68,7 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | pi | `~/.pi/agent/sessions/**/*.jsonl` | `pi --session <path>` |
 | omp | `~/.omp/agent/history.db` | `omp -r <id>` |
 | Qwen Code | `~/.qwen/projects/*/chats/*.jsonl` | `qwen -r <id>` |
+| Kimi | `~/.kimi-code/session_index.jsonl` + wire event streams | `kimi -S <id>` |
 | reasonix | `~/.reasonix/sessions/*.meta.json` | `reasonix -r <path> --dir <ws>` |
 
 Format details, evidence and per-harness pitfalls live in

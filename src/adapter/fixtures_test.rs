@@ -134,6 +134,22 @@ fn all_adapters_read_fixtures() {
         "{\"sessionId\":\"q1\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"type\":\"user\",\"cwd\":\"/tmp/qw\",\"gitBranch\":\"main\",\"message\":{\"role\":\"user\",\"parts\":[{\"text\":\"qwen ask\"}]}}\n",
     );
 
+    // --- kimi: session index + wire event streams
+    let km_dir = home.join(".kimi-code/sessions/wd_demo_ab12/session_k1");
+    write(
+        &km_dir.join("agents/main/wire.jsonl"),
+        "{\"type\":\"metadata\",\"protocol_version\":\"1.5\",\"created_at\":100}\n\
+         {\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"kimi ask\\nsecond line\"}]}\n\
+         {\"type\":\"llm.request\",\"model\":\"k3\"}\n",
+    );
+    write(
+        &home.join(".kimi-code/session_index.jsonl"),
+        &format!(
+            "{{\"sessionId\":\"session_k1\",\"sessionDir\":\"{}\",\"workDir\":\"/tmp/kimi\"}}\n",
+            km_dir.to_string_lossy()
+        ),
+    );
+
     // --- reasonix: meta + transcript, archive filtered
     write(
         &home.join(".reasonix/sessions/demo.meta.json"),
@@ -209,6 +225,12 @@ fn all_adapters_read_fixtures() {
         let q = find(&qw, "q1");
         assert_eq!(q.title, "qwen ask");
         assert_eq!(q.extra.get("branch").map(String::as_str), Some("main"));
+
+        let km = run_adapter("kimi");
+        let k = find(&km, "session_k1");
+        assert_eq!(k.title, "kimi ask");
+        assert_eq!(k.cwd, Path::new("/tmp/kimi"));
+        assert_eq!(k.extra.get("model").map(String::as_str), Some("k3"));
 
         let rx = run_adapter("reasonix");
         assert_eq!(rx.len(), 1, "__archive_ sessions must be filtered");

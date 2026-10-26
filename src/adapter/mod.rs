@@ -9,6 +9,7 @@ pub mod claude;
 pub mod codex;
 #[cfg(test)]
 mod fixtures_test;
+pub mod kimi;
 pub mod omp;
 pub mod opencode;
 pub mod pi;
@@ -46,6 +47,7 @@ pub fn registry() -> Vec<Box<dyn Harness>> {
         Box::new(pi::Pi),
         Box::new(omp::Omp),
         Box::new(qwen::Qwen),
+        Box::new(kimi::Kimi),
         Box::new(reasonix::Reasonix),
     ]
 }
