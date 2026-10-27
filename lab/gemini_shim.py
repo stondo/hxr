@@ -78,14 +78,18 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # keep stdout quiet
         pass
 
-    def _send(self, code: int, payload: dict | list, sse: bool = False):
-        data = json.dumps(payload)
-        if sse:
-            body = f"data: {data}\r\n\r\ndata: [DONE]\r\n\r\n".encode()
+    def _send(self, code: int, payload: dict | list, sse_events: list[dict] | None = None):
+        if sse_events is not None:
+            # Gemini SSE: one data: event per chunk; the stream ends when a
+            # chunk carries finishReason (no OpenAI-style [DONE] sentinel)
+            parts = []
+            for ev in sse_events:
+                parts.append(f"data: {json.dumps(ev)}\r\n\r\n")
+            body = "".join(parts).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
         else:
-            body = data.encode()
+            body = json.dumps(payload).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -118,9 +122,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         text = resp["choices"][0]["message"].get("content") or ""
         if "streamGenerateContent" in path:
-            # one deliberate chunk + a finish chunk: enough for the CLI to
-            # render the answer and close the stream
-            self._send(200, gemini_chunk(text), sse=True)
+            # one text chunk followed by a finishReason chunk closes the
+            # stream cleanly for the SDK's SSE parser
+            self._send(200, None, sse_events=[
+                gemini_chunk(text),
+                gemini_chunk("", finish="STOP"),
+            ])
         else:
             out = gemini_chunk(text)
             out["candidates"][0]["finishReason"] = "STOP"

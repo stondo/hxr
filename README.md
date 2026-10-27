@@ -8,7 +8,7 @@ session — across every harness you have installed — and resume it in the rig
 directory with the right command.
 
 ```
-[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes
+[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes  goose
 tab next · shift-tab prev · enter resume · esc cancel
 ──────────────────────────────────────────────────────────────
   12 min ago   [oc] Adopt froggeric v22.5…   ~/PARA/Projects/local-ai

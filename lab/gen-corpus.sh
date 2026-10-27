@@ -13,7 +13,9 @@ set -uo pipefail
 : "${DEEP_BASE_URL:?point DEEP_BASE_URL at an OpenAI-compatible /v1 endpoint}"
 : "${DEEP_MODEL:?set DEEP_MODEL to the model id served there}"
 KEY=sk-lab-none
-PROJ=/tmp/lab-projects
+# Persistent project dirs (aider keeps its chat history IN the project cwd —
+# they must outlive the container; everything else lives under /root anyway)
+PROJ=/root/lab-projects
 LOG=/tmp/gen-corpus.log
 
 step() { printf '\n\033[1;35m== %s ==\033[0m\n' "$*" | tee -a "$LOG"; }
@@ -37,6 +39,7 @@ fi
 step "aider"
 aider_make_history() { # $1 = project dir, $2 = prompt
     (cd "$1" && OPENAI_API_KEY=$KEY OPENAI_API_BASE="$DEEP_BASE_URL" \
+        timeout 300 \
         aider --model "openai/$DEEP_MODEL" \
               --openai-api-base "$DEEP_BASE_URL" \
               --message "$2" \
