@@ -18,8 +18,11 @@ build() {
 
 run() {
     mkdir -p .lab/home
+    local tty=()
+    [ -t 0 ] && tty=(-t)
     # shellcheck disable=SC2086
-    podman run -it --rm --name hxr-lab \
+    podman run --rm "${tty[@]}" --name hxr-lab \
+        --security-opt label=disable \
         -v "$PWD:/src" \
         -v "$PWD/.lab/home:/root" \
         -e DEEP_BASE_URL -e DEEP_MODEL \

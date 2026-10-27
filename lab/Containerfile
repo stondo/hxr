@@ -25,10 +25,12 @@ ARG GOOSE_VERSION=1.56.0
 # gemini-cli (npm)
 RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
 
-# crush (charmbracelet) — GitHub release tarball, single static binary
+# crush (charmbracelet) — GitHub release; archive root is a versioned dir
 RUN curl -fsSL \
         https://github.com/charmbracelet/crush/releases/download/v${CRUSH_VERSION}/crush_${CRUSH_VERSION}_Linux_x86_64.tar.gz \
-        | tar -xz -C /usr/local/bin
+        | tar -xz -C /tmp \
+    && mv /tmp/crush_${CRUSH_VERSION}_Linux_x86_64/crush /usr/local/bin/crush \
+    && chmod +x /usr/local/bin/crush
 
 # goose (Block) — GitHub release, static musl binary (archive root: ./goose)
 RUN curl -fsSL \
@@ -36,8 +38,15 @@ RUN curl -fsSL \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/goose
 
-# aider (python)
-RUN python3 -m pip install --break-system-packages --no-cache-dir aider-chat
+# aider (python: latest aider-chat needs <3.13, and fedora's 3.13 makes pip
+# backtrack to 2023 pins that build numpy from source — so uv + a managed
+# CPython 3.12, wheels only). Installed outside /root: the runtime mounts the
+# lab home over /root.
+RUN curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_UNMANAGED_INSTALL=/usr/local/bin sh \
+    && UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+       UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+       uv tool install --python 3.12 aider-chat
 
 # Point the CLIs at the LAN endpoint by default (overridable at `podman run`).
 ENV DEEP_BASE_URL=http://192.168.1.99:8001/v1 \

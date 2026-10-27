@@ -10,6 +10,7 @@ pub mod codex;
 pub mod copilot;
 #[cfg(test)]
 mod fixtures_test;
+pub mod goose;
 pub mod hermes;
 pub mod kimi;
 pub mod omp;
@@ -81,6 +82,7 @@ pub fn registry(include_all: bool) -> Vec<Box<dyn Harness>> {
         Box::new(hermes::Hermes {
             include_children: include_all,
         }),
+        Box::new(goose::Goose),
     ]
 }
 

@@ -22,6 +22,8 @@ fail() { printf '\033[0;31m   FAILED: %s\033[0m\n' "$*" | tee -a "$LOG"; }
 
 mkdir -p "$PROJ"/{alpha,beta,gamma}
 : > "$LOG"
+MARKER=/tmp/gen-corpus.marker
+touch "$MARKER"
 
 step "endpoint probe"
 if curl -sf --max-time 5 "$DEEP_BASE_URL/models" > /dev/null; then
@@ -50,9 +52,18 @@ else fail "aider not installed"; fi
 
 # --- gemini-cli ----------------------------------------------------------
 step "gemini-cli"
+mkdir -p "$HOME/.gemini"
+# v0.65: GOOGLE_GEMINI_BASE_URL env-detects the (unvalidatable) "gateway"
+# auth type; pinning gemini-api-key in settings routes around the picker
+# while still honoring the base-URL override for non-vertex auth.
+cat > "$HOME/.gemini/settings.json" <<'EOF'
+{
+  "security": { "auth": { "selectedType": "gemini-api-key" } }
+}
+EOF
 gemini_run() { # $1 = project dir, $2 = prompt
-    (cd "$1" && GOOGLE_GEMINI_BASE_URL=http://localhost:8423 GEMINI_API_KEY=shim \
-        gemini -p "$2" -m "$DEEP_MODEL" 2>&1 | tail -5)
+    (cd "$1" && GEMINI_API_KEY=shim GOOGLE_GEMINI_BASE_URL=http://localhost:8423 \
+        gemini --skip-trust -p "$2" 2>&1 | tail -5)
 }
 if command -v gemini >/dev/null; then
     if ! curl -sf --max-time 2 http://localhost:8423/v1beta/models >/dev/null 2>&1; then
@@ -71,7 +82,7 @@ cat > "$HOME/.config/goose/config.yaml" <<EOF
 GOOSE_PROVIDER: openai
 GOOSE_MODEL: $DEEP_MODEL
 OPENAI_API_KEY: $KEY
-OPENAI_HOST: $DEEP_BASE_URL/
+OPENAI_HOST: ${DEEP_BASE_URL%/v1}/
 EOF
 goose_run() { # $1 = project dir, $2 = prompt
     (cd "$1" && goose run -t "$2" 2>&1 | tail -5)
@@ -96,8 +107,8 @@ providers:
         name: DeepSeek V4 Flash
 EOF
 crush_run() { # $1 = project dir, $2 = prompt
-    (cd "$1" && CRUSH_DISABLE_UPDATE=1 timeout 120 \
-        crush -m "deep/$DEEP_MODEL" -p "$2" 2>&1 | tail -5)
+    (cd "$1" && CRUSH_DISABLE_UPDATE=1 timeout 300 \
+        crush -y run -m "deep/$DEEP_MODEL" "$2" 2>&1 | tail -5)
 }
 if command -v crush >/dev/null; then
     crush_run "$PROJ/alpha" 'Add a heading to crush.md saying crush-alpha' || fail crush
@@ -106,7 +117,7 @@ else fail "crush not installed"; fi
 
 # --- summary --------------------------------------------------------------
 step "created stores (this run's footprint in /root)"
-find /root -type f -newer "$LOG" 2>/dev/null \
+find /root -type f -newer "$MARKER" 2>/dev/null \
     | grep -Ev '/(\.npm|\.cache|\.cargo|node_modules|\.config/goose/config.yaml|\.config/crush/config.yaml)' \
     | sort | tee -a "$LOG"
 

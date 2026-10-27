@@ -253,6 +253,36 @@ fn all_adapters_read_fixtures() {
     );
     write(&home.join(".hermes/sessions/sessions.json"), "{}");
 
+    // --- goose: sessions.db with parts-array transcripts
+    let gs_db = home.join(".local/share/goose/sessions/sessions.db");
+    write(&gs_db, "");
+    {
+        let c = rusqlite::Connection::open(&gs_db).unwrap();
+        c.execute_batch(
+            "CREATE TABLE sessions (id TEXT, name TEXT, description TEXT,
+             user_set_name TEXT, session_type TEXT, working_dir TEXT,
+             created_at TIMESTAMP, updated_at TIMESTAMP, extension_data TEXT,
+             total_tokens INTEGER, input_tokens INTEGER, output_tokens INTEGER);
+             CREATE TABLE messages (id INTEGER PRIMARY KEY, message_id TEXT,
+             session_id TEXT, role TEXT, content_json TEXT,
+             created_timestamp INTEGER, timestamp TIMESTAMP, tokens INTEGER,
+             metadata_json TEXT);
+             INSERT INTO sessions VALUES ('20260101_1','CLI Session','Summarize the repo','', 'user','/tmp/gs1',
+               '2026-01-01 10:00:00','2026-01-01 10:05:00','{}', 4200, 3900, 300);
+             INSERT INTO sessions VALUES ('20260101_2','My custom title','',1,'user','/tmp/gs2',
+               '2026-01-01 11:00:00','2026-01-01 11:01:00','{}', NULL, NULL, NULL);
+             INSERT INTO messages VALUES (1,'m1','20260101_1','user',
+               '[{\"type\":\"text\",\"text\":\"needleGS in goose body\"}]', 1767265200, '2026-01-01 10:00:00', 5, '{}');
+             INSERT INTO messages VALUES (2,'m2','20260101_1','user',
+               '[{\"type\":\"text\",\"text\":\"<turn-context>\\nboilerplate</turn-context>\"}]', 1767265200, '2026-01-01 10:00:00', 5, '{}');
+             INSERT INTO messages VALUES (3,'m3','20260101_1','assistant',
+               '[{\"type\":\"text\",\"text\":\"goose rendered reply\"}]', 1767265260, '2026-01-01 10:01:00', 5, '{}');
+             INSERT INTO messages VALUES (4,'m4','20260101_2','user',
+               '[{\"type\":\"text\",\"text\":\"no-dir-title fallback\"}]', 1767265800, '2026-01-01 11:00:00', 5, '{}');",
+        )
+        .unwrap();
+    }
+
     // ---------------- assertions (HXR_HOME set for the whole block) --------
     with_hxr_home(&home, || {
         let oc = run_adapter("opencode");
@@ -369,6 +399,33 @@ fn all_adapters_read_fixtures() {
         assert_eq!(argv, vec!["hermes", "--resume", "20260101_120000_abcd01"]);
         assert_eq!(cwd, Path::new("/tmp/he1"));
 
+        let gs = run_adapter("goose");
+        assert_eq!(gs.len(), 2);
+        let g1 = find(&gs, "20260101_1");
+        assert_eq!(g1.title, "Summarize the repo", "description beats name");
+        assert_eq!(g1.cwd, Path::new("/tmp/gs1"));
+        assert_eq!(g1.updated_ms, 1_767_261_900_000, "UTC updated_at → ms");
+        assert_eq!(
+            g1.extra.get("tokens").map(String::as_str),
+            Some("4200"),
+            "total_tokens preferred"
+        );
+        assert_eq!(
+            find(&gs, "20260101_2").title,
+            "My custom title",
+            "user-renamed name wins"
+        );
+        let (argv, cwd) = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "goose")
+            .unwrap()
+            .resume(g1, &[]);
+        assert_eq!(
+            argv,
+            vec!["goose", "session", "--resume", "--session-id", "20260101_1"]
+        );
+        assert_eq!(cwd, Path::new("/tmp/gs1"));
+
         // --- render (hxr show): file-backed adapters produce turns
         let rd = |harness: &str, s: &Session| {
             registry(false)
@@ -446,6 +503,12 @@ fn all_adapters_read_fixtures() {
                 .unwrap()
                 .contains("needleHE in legacy file"),
             "legacy transcript"
+        );
+        assert!(cm("goose", g1, "needleGS").is_some(), "goose body search");
+        assert!(
+            rd("goose", g1).unwrap().contains("goose rendered reply")
+                && !rd("goose", g1).unwrap().contains("turn-context"),
+            "goose transcript skips boilerplate"
         );
 
         let r = find(&rx, "demo");

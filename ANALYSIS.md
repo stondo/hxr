@@ -20,6 +20,7 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
 | kimi | `~/.kimi-code/session_index.jsonl` (`sessionId`/`sessionDir`/`workDir`) + `<sessionDir>/agents/main/wire.jsonl` event streams (192) | index `sessionId` (`session_<uuid>`) | index `workDir` | first `turn.prompt` entry's `input[].text`; model from first `llm.request` | wire.jsonl mtime | `kimi -S <id>` from workDir |
 | reasonix | `~/.reasonix/sessions/<name>.jsonl` + sibling `.meta.json` (7) | file path (session "name", e.g. `code-local-ai`) | `meta.workspace` | `meta.summary` (may be long — truncate) | file mtime | `reasonix -r <path> --dir <workspace>` |
 | hermes | `~/.hermes/state.db` `sessions` table (current; WAL) ∪ legacy `~/.hermes/sessions/session_<id>.json` flat objects (44 files live) | `sessions.id` (`YYYYMMDD_HHMMSS_<hex>`); legacy `session_id` | `sessions.cwd` — only newer rows; legacy files record none → home fallback | `sessions.title`; legacy: first user `messages[]` entry | `coalesce(last_activity_at, ended_at, started_at)` (s); legacy file mtime | `hermes --resume <id>` — resolves id-or-title against state.db only |
+| goose | `~/.local/share/goose/sessions/sessions.db` sqlite: `sessions` + `messages` (parts-array `content_json`) | `id` (`YYYYMMDD_N`) | `working_dir` | user-renamed `name` (`user_set_name`) else llm `description` | `updated_at` (UTC `CURRENT_TIMESTAMP` string) | `goose session --resume --session-id <id>` from working_dir |
 
 ## Per-harness evidence and details
 
@@ -140,6 +141,26 @@ Two eras of storage, read as a union (live evidence: netcup, v0.21.5,
   a resume also cds into the recorded working directory itself; hxr still
   spawns it from `session.cwd`.
 - Timestamps in the db are epoch **seconds** (float) — ×1000 for hxr's ms.
+
+### goose
+- `~/.local/share/goose/sessions/sessions.db` (sqlite; respects
+  `XDG_DATA_HOME`, falls back to `~/.config/goose/sessions/sessions.db` for
+  pre-XDG layouts). Older goose kept jsonl session files there — the `--path`
+  shim in `goose session --help` still parses ids from those filenames; only
+  the sqlite store is read.
+- `sessions` rows: `id` = `YYYYMMDD_N` (per-day counter), `working_dir`,
+  `session_type` (`user` seen), token columns (`total_tokens` else
+  input+output), `updated_at` as sqlite `CURRENT_TIMESTAMP` (UTC string).
+  A row is created **before** the first model reply — error-only sessions
+  are real and resumable.
+- `messages` rows: `role`, `content_json` = anthropic-style parts array
+  (`[{"type":"text","text":…}]`; errors as `{"type":"error",…}`), epoch
+  **seconds** `created_timestamp`. Every turn carries an injected
+  `<turn-context>` user part (cwd/time boilerplate) — skipped like claude's
+  command-caveats.
+- `user_set_name` is **BOOLEAN** (sqlite numeric) — a `nullif('')`-style
+  text projection silently breaks row decoding (found live).
+- Resume: `goose session --resume --session-id <id>` from `working_dir`.
 
 ## Detection rule ("installed and has sessions")
 

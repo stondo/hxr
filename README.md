@@ -100,6 +100,7 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | Copilot CLI | `~/.copilot/session-state/<uuid>/workspace.yaml` | `copilot -r <id>` |
 | reasonix | `~/.reasonix/sessions/*.meta.json` | `reasonix -r <path> --dir <ws>` |
 | Hermes | `~/.hermes/state.db` (`sessions` ∪ `messages`) + legacy `~/.hermes/sessions/session_*.json` | `hermes --resume <id>` |
+| Goose | `~/.local/share/goose/sessions/sessions.db` (`sessions` ∪ `messages`) | `goose session --resume --session-id <id>` |
 
 Format details, evidence and per-harness pitfalls live in
 [ANALYSIS.md](ANALYSIS.md).
