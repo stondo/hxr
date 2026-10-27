@@ -44,7 +44,7 @@ aider_make_history() { # $1 = project dir, $2 = prompt
               --openai-api-base "$DEEP_BASE_URL" \
               --message "$2" \
               --yes-always --no-git --no-auto-commits --no-check-update \
-              --no-show-model-warnings --no-linting --no-auto-test \
+              --no-show-model-warnings --no-auto-lint --no-auto-test \
               2>&1 | tail -5)
 }
 if command -v aider >/dev/null; then
@@ -97,21 +97,17 @@ else fail "goose not installed"; fi
 
 # --- crush ---------------------------------------------------------------
 step "crush"
+# v0.98 config is bash: a crushrc registering the endpoint as an
+# openai-compat provider (config.yaml providers: and bare providers.json
+# entries are ignored — see ANALYSIS.md)
 mkdir -p "$HOME/.config/crush"
-cat > "$HOME/.config/crush/config.yaml" <<EOF
-default_provider: deep
-providers:
-  deep:
-    name: deep
-    baseURL: $DEEP_BASE_URL
-    apiKey: $KEY
-    models:
-      - id: $DEEP_MODEL
-        name: DeepSeek V4 Flash
+cat > "$HOME/.config/crush/crushrc" <<EOF
+provider add deep --type openai-compat --base-url "$DEEP_BASE_URL" --api-key "$KEY"
+model add deep/$DEEP_MODEL --name "DeepSeek V4 Flash" --context-window 1000000
 EOF
 crush_run() { # $1 = project dir, $2 = prompt
     (cd "$1" && CRUSH_DISABLE_UPDATE=1 timeout 300 \
-        crush -y run -m "deep/$DEEP_MODEL" "$2" 2>&1 | tail -5)
+        crush run -m "deep/$DEEP_MODEL" "$2" 2>&1 | tail -5)
 }
 if command -v crush >/dev/null; then
     crush_run "$PROJ/alpha" 'Add a heading to crush.md saying crush-alpha' || fail crush

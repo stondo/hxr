@@ -313,6 +313,41 @@ fn all_adapters_read_fixtures() {
         "{\"projects\":{\"/tmp/labproj\":\"labproj\"}}",
     );
 
+    // --- crush: projects.json index + per-project crush.db
+    let cs_dir = home.join("lab-projects/csproj/.crush");
+    write(&cs_dir.join("crush.db"), "");
+    {
+        let c = rusqlite::Connection::open(cs_dir.join("crush.db")).unwrap();
+        c.execute_batch(
+            "CREATE TABLE sessions (id TEXT, title TEXT, parent_session_id TEXT,
+             message_count INTEGER, prompt_tokens INTEGER, completion_tokens INTEGER,
+             cost REAL, updated_at INTEGER);
+             CREATE TABLE messages (id TEXT, session_id TEXT, role TEXT, parts TEXT,
+             model TEXT, created_at INTEGER, updated_at INTEGER);
+             INSERT INTO sessions VALUES ('c1111111-1111-4111-8111-111111111111',
+               'Titled crush chat', NULL, 3, 500, 120, 0.045, 1767265800);
+             INSERT INTO sessions VALUES ('c2222222-2222-4222-8222-222222222222',
+               'Untitled Session', 'c1111111-1111-4111-8111-111111111111', 2, 10, 5, 0.0, 1767265900);
+             INSERT INTO sessions VALUES ('c3333333-3333-4333-8333-333333333333',
+               'Untitled Session', NULL, 1, 20, 8, 0.0, 1767265700);
+             INSERT INTO messages VALUES ('m1','c1111111-1111-4111-8111-111111111111','user',
+               '[{\"type\":\"text\",\"data\":{\"text\":\"needleCR in crush body\"}},{\"type\":\"finish\",\"data\":{\"reason\":\"stop\"}}]',NULL,1,1);
+             INSERT INTO messages VALUES ('m2','c1111111-1111-4111-8111-111111111111','assistant',
+               '[{\"type\":\"text\",\"data\":{\"text\":\"crush rendered reply\"}}]','DeepSeek-V4-Flash-0731',2,2);
+             INSERT INTO messages VALUES ('m3','c3333333-3333-4333-8333-333333333333','user',
+               '[{\"type\":\"text\",\"data\":{\"text\":\"untitled falls back to first ask\"}}]',NULL,1,1);",
+        )
+        .unwrap();
+    }
+    write(
+        &home.join(".local/share/crush/projects.json"),
+        &format!(
+            "{{\"projects\":[{{\"path\":\"{}\",\"data_dir\":\"{}\",\"last_accessed\":\"2026-01-01T00:00:00Z\"}}]}}",
+            home.join("lab-projects/csproj").to_string_lossy(),
+            cs_dir.to_string_lossy()
+        ),
+    );
+
     // --- goose: sessions.db with parts-array transcripts
 
     let gs_db = home.join(".local/share/goose/sessions/sessions.db");
@@ -534,6 +569,35 @@ fn all_adapters_read_fixtures() {
         assert_eq!(argv, vec!["aider", "--restore-chat-history"]);
         assert_eq!(cwd, home.join("lab-projects/adproj"));
 
+        let cr = run_adapter("crush");
+        assert_eq!(cr.len(), 2, "child session hidden without --all");
+        let c1 = find(&cr, "c1111111-1111-4111-8111-111111111111");
+        assert_eq!(c1.title, "Titled crush chat");
+        assert_eq!(c1.cwd, home.join("lab-projects/csproj"));
+        assert_eq!(c1.updated_ms, 1_767_265_800_000, "epoch seconds → ms");
+        assert_eq!(
+            c1.extra.get("tokens").map(String::as_str),
+            Some("in 500 / out 120")
+        );
+        assert_eq!(
+            c1.extra.get("totalCostUsd").map(String::as_str),
+            Some("0.0450")
+        );
+        assert_eq!(
+            find(&cr, "c3333333-3333-4333-8333-333333333333").title,
+            "untitled falls back to first ask"
+        );
+        let (argv, cwd) = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "crush")
+            .unwrap()
+            .resume(c1, &[]);
+        assert_eq!(
+            argv,
+            vec!["crush", "-s", "c1111111-1111-4111-8111-111111111111"]
+        );
+        assert_eq!(cwd, home.join("lab-projects/csproj"));
+
         // --- render (hxr show): file-backed adapters produce turns
         let rd = |harness: &str, s: &Session| {
             registry(false)
@@ -636,6 +700,15 @@ fn all_adapters_read_fixtures() {
         assert!(
             rd("aider", a0).unwrap().contains("hello.py"),
             "aider transcript keeps file listing"
+        );
+        assert!(cm("crush", c1, "needleCR").is_some(), "crush body search");
+        assert!(
+            rd("crush", c1).unwrap().contains("crush rendered reply"),
+            "crush transcript text parts"
+        );
+        assert!(
+            !rd("crush", c1).unwrap().contains("finish"),
+            "finish parts carry no prose"
         );
 
         let r = find(&rx, "demo");

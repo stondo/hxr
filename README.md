@@ -8,7 +8,8 @@ session — across every harness you have installed — and resume it in the rig
 directory with the right command.
 
 ```
-[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes  goose  gemini  aider
+[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix
+       hermes  goose  gemini  aider  crush
 tab next · shift-tab prev · enter resume · esc cancel
 ──────────────────────────────────────────────────────────────
   12 min ago   [oc] Adopt froggeric v22.5…   ~/PARA/Projects/local-ai
@@ -103,6 +104,7 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | Goose | `~/.local/share/goose/sessions/sessions.db` (`sessions` ∪ `messages`) | `goose session --resume --session-id <id>` |
 | Gemini CLI | `~/.gemini/tmp/<project>/chats/*.jsonl` + `projects.json` cwd map | `gemini --session-file <path>` |
 | aider | `<project>/.aider.chat.history.md` (markdown, per-started blocks) | `aider --restore-chat-history` in the project |
+| Crush | `~/.local/share/crush/projects.json` → per-project `<dir>/.crush/crush.db` | `crush -s <id>` |
 
 Format details, evidence and per-harness pitfalls live in
 [ANALYSIS.md](ANALYSIS.md).

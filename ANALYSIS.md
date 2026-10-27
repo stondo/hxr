@@ -23,6 +23,7 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
 | goose | `~/.local/share/goose/sessions/sessions.db` sqlite: `sessions` + `messages` (parts-array `content_json`) | `id` (`YYYYMMDD_N`) | `working_dir` | user-renamed `name` (`user_set_name`) else llm `description` | `updated_at` (UTC `CURRENT_TIMESTAMP` string) | `goose session --resume --session-id <id>` from working_dir |
 | gemini | `~/.gemini/tmp/<project>/chats/session-*.jsonl` + `~/.gemini/projects.json` (cwd→project-name map) | header `sessionId` uuid; filename fallback (rewinds drop the header) | projects.json inverted over the parent dir name (`<base>-N` on collisions) → home fallback | first non-`<session_context>` user entry | file mtime (jsonl `$set.lastUpdated` is not worth a tail scan) | `gemini --session-file <path>` from the original cwd |
 | aider | `<project>/.aider.chat.history.md` markdown (blocks per `# aider chat started`), `~/.aider/chat-history.md` fallback | `path#block` (opaque; no id resume in aider) | history file's directory | block's `#### ` prompt | file mtime (block timestamps are local naive) | `aider --restore-chat-history` in the project (continue-latest mapping, per issue #2) |
+| crush | `~/.local/share/crush/projects.json` → per-project `<project>/.crush/crush.db` (`sessions` + `messages` with typed `parts` arrays) | `sessions.id` (uuid) | projects.json `path` | `title` unless "Untitled Session" → first user `text` part | `updated_at` (epoch **seconds**) | `crush -s <id>` from the project path |
 
 ## Per-harness evidence and details
 
@@ -197,6 +198,24 @@ Two eras of storage, read as a union (live evidence: netcup, v0.21.5,
   hidden dirs / node_modules / target skipped — aider ships no index.
   Recency is file mtime for every block (delimiter timestamps are local
   naive strings).
+
+### crush
+- v0.98 config is **bash**: `~/.config/crush/crushrc` runs at startup
+  (`provider add <id> --type openai-compat --base-url … --api-key …`,
+  `model add <provider>/<id> …`). The old `config.yaml` providers block and
+  a bare `providers.json` entry are ignored — "No providers configured"
+  means no crushrc/agent config. `providers.json` in the data dir is only
+  the model catalog.
+- Store is per-project sqlite: `~/.local/share/crush/projects.json`
+  registers `{path, data_dir, last_accessed}` (a failed run registers the
+  project and creates the db too); `<data_dir>/crush.db` (default
+  `<project>/.crush/`) holds `sessions` (uuid, title — "Untitled Session"
+  until the TUI lazily titles it, token/cost columns, `parent_session_id`
+  children, epoch-**second** timestamps) and `messages` (role, `parts` =
+  typed arrays: `text` / `reasoning` / `tool_call` / `tool_result` /
+  `finish`; prose lives in `text` parts at `/data/text`).
+- Headless: `crush run -m provider/model "<prompt>"` (no `-p`, and `-y`
+  does not hoist onto subcommands). Resume: `crush -s <id>`.
 
 ## Detection rule ("installed and has sessions")
 

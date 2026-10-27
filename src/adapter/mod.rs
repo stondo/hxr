@@ -9,6 +9,7 @@ pub mod aider;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
+pub mod crush;
 #[cfg(test)]
 mod fixtures_test;
 pub mod gemini;
@@ -87,6 +88,9 @@ pub fn registry(include_all: bool) -> Vec<Box<dyn Harness>> {
         Box::new(goose::Goose),
         Box::new(gemini::Gemini),
         Box::new(aider::Aider),
+        Box::new(crush::Crush {
+            include_children: include_all,
+        }),
     ]
 }
 
