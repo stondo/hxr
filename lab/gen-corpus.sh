@@ -51,10 +51,14 @@ else fail "aider not installed"; fi
 # --- gemini-cli ----------------------------------------------------------
 step "gemini-cli"
 gemini_run() { # $1 = project dir, $2 = prompt
-    (cd "$1" && OPENAI_API_KEY=$KEY OPENAI_BASE_URL="$DEEP_BASE_URL" \
-        gemini -m "openai/$DEEP_MODEL" -p "$2" 2>&1 | tail -5)
+    (cd "$1" && GOOGLE_GEMINI_BASE_URL=http://localhost:8423 GEMINI_API_KEY=shim \
+        gemini -p "$2" -m "$DEEP_MODEL" 2>&1 | tail -5)
 }
 if command -v gemini >/dev/null; then
+    if ! curl -sf --max-time 2 http://localhost:8423/v1beta/models >/dev/null 2>&1; then
+        nohup python3 /src/lab/gemini_shim.py >/tmp/shim.out 2>&1 &
+        sleep 1
+    fi
     gemini_run "$PROJ/alpha" 'Write a one-line summary of this project to gemini.txt' || fail gemini
     gemini_run "$PROJ/beta"  'List the files here in listing.txt'                     || fail gemini
     gemini_run "$PROJ/gamma" 'Suggest a name for a yaml config demo project'          || fail gemini
@@ -67,7 +71,7 @@ cat > "$HOME/.config/goose/config.yaml" <<EOF
 GOOSE_PROVIDER: openai
 GOOSE_MODEL: $DEEP_MODEL
 OPENAI_API_KEY: $KEY
-OPENAI_BASE_HOST: $DEEP_BASE_URL/
+OPENAI_HOST: $DEEP_BASE_URL/
 EOF
 goose_run() { # $1 = project dir, $2 = prompt
     (cd "$1" && goose run -t "$2" 2>&1 | tail -5)
