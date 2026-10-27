@@ -343,8 +343,10 @@ fn all_adapters_read_fixtures() {
         &home.join(".local/share/crush/projects.json"),
         &format!(
             "{{\"projects\":[{{\"path\":\"{}\",\"data_dir\":\"{}\",\"last_accessed\":\"2026-01-01T00:00:00Z\"}}]}}",
-            home.join("lab-projects/csproj").to_string_lossy(),
-            cs_dir.to_string_lossy()
+            home.join("lab-projects/csproj")
+                .to_string_lossy()
+                .replace('\\', "/"),
+            cs_dir.to_string_lossy().replace('\\', "/")
         ),
     );
 
