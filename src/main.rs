@@ -8,7 +8,6 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use model::Session;
 use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 use adapter::{Harness, registry};
@@ -64,6 +63,16 @@ struct Cli {
     #[arg(long, hide = true)]
     search: Option<String>,
 
+    /// List sessions from these machines too, live over ssh (repeatable;
+    /// the remote needs hxr on PATH). Resume is delegated to the remote.
+    #[arg(short = 'R', long = "remote")]
+    remote: Vec<String>,
+
+    /// Internal: raw TSV dump for remote fetch (id, harness, cwd, updated_ms,
+    /// title) — the machine-to-machine format (hidden).
+    #[arg(long, hide = true, num_args = 0..=1, default_missing_value = "all")]
+    dump: Option<String>,
+
     /// Internal: per-picker tab-state file (hidden).
     #[arg(long, hide = true)]
     state: Option<String>,
@@ -116,11 +125,79 @@ fn main() -> Result<()> {
         .map(ui::parse_since)
         .map(|d| d.context("hxr: bad --since value (try 30d, 2w, 48h, 15m, 90s)"));
 
+    // Internal dump mode: machine-oriented TSV consumed by remote hxr.
+    if let Some(scope) = &cli.dump {
+        let scope_val: Option<String> = match scope.as_str() {
+            "all" => None,
+            other => Some(other.to_string()),
+        };
+        let detected = discover(scope_val.as_deref(), cli.all);
+        check_detected(&detected, scope_val.as_deref())?;
+        let mut sessions = flatten(&detected);
+        if let Some(g) = cli.since.as_deref() {
+            let ms = ui::parse_since(g)
+                .context("hxr: bad --since value (try 30d, 2w, 48h, 15m, 90s)")?;
+            apply_since(&mut sessions, Some(Ok(ms)))?;
+        }
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        for s in &sessions {
+            if writeln!(
+                out,
+                "{}\t{}\t{}\t{}\t{}",
+                s.id,
+                s.harness,
+                s.cwd.to_string_lossy(),
+                s.updated_ms,
+                s.title
+            )
+            .is_err()
+            {
+                break;
+            }
+        }
+        return Ok(());
+    }
+
     // Internal preview mode: fzf highlights a line, we render its detail pane.
     if let Some(args) = &cli.preview
         && args.len() == 2
     {
         let (harness, id) = (&args[0], &args[1]);
+        // remote sessions live in the picker-lifetime caches, not local stores
+        let remotes = cli
+            .state
+            .as_deref()
+            .map(load_remote_caches)
+            .unwrap_or_default();
+        if let Some(remote) = remotes
+            .iter()
+            .find(|s| &s.id == id && &s.harness == harness)
+        {
+            let Some(host) = remote.extra.get("remote") else {
+                return Ok(());
+            };
+            let out = Command::new("ssh")
+                .args([
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=8",
+                    host,
+                    "hxr",
+                    "--preview",
+                    harness,
+                    id,
+                ])
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    print!("{}", String::from_utf8_lossy(&o.stdout));
+                }
+                _ => println!("(remote {host} preview failed)"),
+            }
+            return Ok(());
+        }
         let detected = discover(Some(harness), false);
         match detected
             .first()
@@ -172,7 +249,14 @@ fn main() -> Result<()> {
             return Ok(());
         };
         let tab = tab_of(&target);
-        emit_feed(tab, &names, grep.as_deref(), cli.since.as_deref(), cli.all)?;
+        emit_feed(
+            tab,
+            &names,
+            grep.as_deref(),
+            cli.since.as_deref(),
+            cli.all,
+            Some(state_path),
+        )?;
         return Ok(());
     }
 
@@ -191,6 +275,14 @@ fn main() -> Result<()> {
         }
         // Merged lists carry 2-char harness tags so alt-0 stays navigable.
         let tags = scope.is_none();
+        if !cli.remote.is_empty() {
+            let remotes: Vec<Session> = cli
+                .remote
+                .iter()
+                .flat_map(|h| fetch_remote(h, cli.since.as_deref()))
+                .collect();
+            merge_remotes(&mut sessions, remotes, cli.grep.as_deref());
+        }
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
         for line in ui::format_lines(&sessions, tags) {
@@ -233,6 +325,17 @@ fn main() -> Result<()> {
     {
         bail!("hxr: harness not detected: {tab}");
     }
+
+    // remotes: one live fetch per host; content mode filters them by title
+    let remote_sessions: Vec<Session> = if cli.remote.is_empty() {
+        Vec::new()
+    } else {
+        cli.remote
+            .iter()
+            .flat_map(|h| fetch_remote(h, cli.since.as_deref()))
+            .collect()
+    };
+    merge_remotes(&mut sessions, remote_sessions, cli.grep.as_deref());
 
     // -G: propagate the pattern to fzf child processes (--preview) so the
     // match snippet can be re-derived per highlight. Single-threaded here.
@@ -282,6 +385,41 @@ fn main() -> Result<()> {
 
     let (argv, cwd) = h.resume(&session, &cli.extra);
 
+    if let Some(host) = session.extra.get("remote") {
+        // delegate the resume to the remote's own hxr (it knows the cwd,
+        // the adapter and the CLI): ssh -t <host> hxr --session <id> --
+        let mut argv = vec![
+            "ssh".to_string(),
+            "-t".to_string(),
+            host.clone(),
+            "hxr".to_string(),
+            "--session".to_string(),
+            session.id.clone(),
+        ];
+        if !cli.extra.is_empty() {
+            argv.push("--".to_string());
+            argv.extend_from_slice(&cli.extra);
+        }
+        if cli.print_cmd {
+            println!("cmd: {}", argv.join(" "));
+            return Ok(());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            let err = Command::new(&argv[0]).args(&argv[1..]).exec();
+            bail!("hxr: exec ssh: {err}");
+        }
+        #[cfg(windows)]
+        {
+            let status = Command::new(&argv[0])
+                .args(&argv[1..])
+                .status()
+                .with_context(|| "hxr: running ssh")?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
+    }
+
     if cli.print_cmd {
         println!("cwd: {}", cwd.display());
         println!("cmd: {}", argv.join(" "));
@@ -291,14 +429,29 @@ fn main() -> Result<()> {
         bail!("hxr: directory no longer exists: {}", cwd.display());
     }
     // Safety: no worker threads are running at this point.
+    #[cfg(unix)]
     unsafe {
         std::env::remove_var("HXR_GREP");
     }
-    let err = Command::new(&argv[0])
-        .args(&argv[1..])
-        .current_dir(&cwd)
-        .exec();
-    bail!("hxr: exec {}: {err}", argv[0]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        let err = Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(&cwd)
+            .exec();
+        bail!("hxr: exec {}: {err}", argv[0]);
+    }
+    #[cfg(windows)]
+    {
+        // no exec(3) on Windows: run the CLI as a child and propagate its code
+        let status = Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(&cwd)
+            .status()
+            .with_context(|| format!("hxr: running {}", argv[0]))?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 fn check_detected(detected: &[Detected], scope: Option<&str>) -> Result<()> {
@@ -337,6 +490,13 @@ fn apply_grep(sessions: &mut Vec<Session>, detected: &[Detected], pattern: &str)
     let hits: Vec<Option<String>> = sessions
         .par_iter()
         .map(|s| {
+            if s.extra.contains_key("remote") {
+                // remote sessions carry metadata only: title match
+                return pat
+                    .find(&s.title)
+                    .is_some()
+                    .then(|| format!("(title) {}", s.title));
+            }
             detected
                 .iter()
                 .find(|d| d.harness.name() == s.harness)
@@ -371,6 +531,164 @@ fn session_hit(
         return Some(adapter::snippet(msg, m.range()));
     }
     h.content_match(s, pat)
+}
+
+/// Fetch one remote machine's sessions over ssh (live, nothing is copied).
+/// Unreachable machines or missing remote hxr degrade to a warning.
+fn fetch_remote(host: &str, since: Option<&str>) -> Vec<Session> {
+    let mut cmd = Command::new("ssh");
+    cmd.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        host,
+        "hxr",
+        "--dump",
+        "all",
+    ]);
+    if let Some(since) = since {
+        cmd.args(["--since", since]);
+    }
+    let out = cmd.output();
+    let Ok(out) = out else {
+        eprintln!("hxr: remote {host}: ssh unavailable");
+        return Vec::new();
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("--dump") {
+            eprintln!("hxr: remote {host}: hxr is too old for --remote (needs >= 0.7.0)");
+        } else {
+            eprintln!("hxr: remote {host}: unreachable or hxr not installed");
+        }
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(parse_dump_line)
+        .map(|mut s| {
+            s.extra.insert("remote".to_string(), host.to_string());
+            s
+        })
+        .collect()
+}
+
+/// Picker-lifetime remote caches: `<state>.remote-<host>` files holding raw
+/// dump lines, written once at launch so tab/ctrl-g reloads need no new ssh.
+fn write_remote_caches(state: &std::path::Path, sessions: &[Session]) {
+    let mut hosts: Vec<&str> = sessions
+        .iter()
+        .filter_map(|s| s.extra.get("remote").map(String::as_str))
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    for host in hosts {
+        let path = remote_cache_path(state, host);
+        let body: String = sessions
+            .iter()
+            .filter(|s| s.extra.get("remote").map(String::as_str) == Some(host))
+            .map(|s| {
+                format!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    s.id,
+                    s.harness,
+                    s.cwd.to_string_lossy(),
+                    s.updated_ms,
+                    s.title
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = std::fs::write(path, body);
+    }
+}
+
+fn remove_state_and_caches(state: &std::path::Path) {
+    let _ = std::fs::remove_file(state);
+    let Some(dir) = state.parent() else { return };
+    let prefix = format!(
+        "{}.remote-",
+        state.file_name().unwrap_or_default().to_string_lossy()
+    );
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+fn remote_cache_path(state: &std::path::Path, host: &str) -> std::path::PathBuf {
+    let mut name = state.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".remote-{host}"));
+    state.with_file_name(name)
+}
+
+fn load_remote_caches(state_path: &str) -> Vec<Session> {
+    let state = std::path::Path::new(state_path);
+    let Some(dir) = state.parent() else {
+        return Vec::new();
+    };
+    let prefix = format!(
+        "{}.remote-",
+        state.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(host) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Ok(body) = std::fs::read_to_string(e.path()) else {
+            continue;
+        };
+        for mut s in body.lines().filter_map(parse_dump_line) {
+            s.extra.insert("remote".to_string(), host.to_string());
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// One `--dump` line -> Session (no adapter: metadata only).
+fn parse_dump_line(line: &str) -> Option<Session> {
+    let mut f = line.splitn(5, '\t');
+    let id = f.next()?.to_string();
+    let harness = f.next()?.to_string();
+    let cwd = std::path::PathBuf::from(f.next()?);
+    let updated_ms: i64 = f.next()?.parse().ok()?;
+    let title = f.next().unwrap_or("").to_string();
+    Some(Session {
+        id,
+        harness,
+        cwd,
+        title,
+        updated_ms,
+        extra: Default::default(),
+    })
+}
+
+/// Merge remote sessions (already fetched) into a session list, keeping the
+/// global recency order. In content mode remotes match by title only.
+fn merge_remotes(sessions: &mut Vec<Session>, remotes: Vec<Session>, grep: Option<&str>) {
+    let remotes = match grep {
+        Some(pat) => match adapter::SearchPattern::new(pat) {
+            Ok(p) => remotes
+                .into_iter()
+                .filter(|s| p.find(&s.title).is_some())
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        None => remotes,
+    };
+    sessions.extend(remotes);
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
 }
 
 /// Detection rule: binary on PATH and discover() yields >= 1 session.
@@ -417,6 +735,7 @@ fn pick_with_fzf(
     // the CLI -G pattern seeds the state so tab cycling and the preview pane
     // stay in content mode for the whole session
     write_state(&state, &initial, names, grep.unwrap_or(""));
+    write_remote_caches(&state, sessions);
 
     let feed: Vec<Session> = match initial_tab {
         Some(tab) => sessions
@@ -445,12 +764,12 @@ fn pick_with_fzf(
         // the feed was still writing) — treat as cancel, not an error.
         if stdin.write_all(input.as_bytes()).is_err() {
             let _ = child.wait();
-            let _ = std::fs::remove_file(&state);
+            remove_state_and_caches(&state);
             return Ok(None);
         }
     } // dropped => EOF so fzf can render
     let out = child.wait_with_output()?;
-    let _ = std::fs::remove_file(&state);
+    remove_state_and_caches(&state);
     if !out.status.success() {
         return Ok(None);
     }
@@ -590,6 +909,7 @@ fn emit_feed(
     grep: Option<&str>,
     since: Option<&str>,
     include_all: bool,
+    state_path: Option<&str>,
 ) -> Result<()> {
     let detected = discover(tab, include_all);
     let mut sessions = flatten(&detected);
@@ -600,6 +920,10 @@ fn emit_feed(
     }
     if let Some(pat) = grep {
         apply_grep(&mut sessions, &detected, pat)?;
+    }
+    if let Some(sp) = state_path {
+        let remotes = load_remote_caches(sp);
+        merge_remotes(&mut sessions, remotes, grep);
     }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -621,18 +945,27 @@ fn page(text: String) -> Result<()> {
         print!("{text}");
         return Ok(());
     }
-    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".to_string());
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&pager)
-        .stdin(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("hxr: starting pager {pager:?}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write as _;
-        let _ = stdin.write_all(text.as_bytes());
+    #[cfg(unix)]
+    {
+        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".to_string());
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&pager)
+            .stdin(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("hxr: starting pager {pager:?}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write as _;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        child.wait()?;
     }
-    child.wait()?;
+    #[cfg(windows)]
+    {
+        // no sh/$PAGER convention worth betting on: print and let the
+        // terminal handle scrollback
+        print!("{text}");
+    }
     Ok(())
 }
 
@@ -707,6 +1040,20 @@ fn resolve_by_prefix(sessions: &[Session], prefix: &str) -> Result<Option<Sessio
 #[cfg(test)]
 mod tests {
     use super::cycle_target;
+    use super::parse_dump_line;
+
+    #[test]
+    fn dump_line_roundtrip() {
+        let s = parse_dump_line("ses_x\topencode\t/home/u/proj\t1700000000000\tthe title")
+            .expect("parses");
+        assert_eq!(s.id, "ses_x");
+        assert_eq!(s.harness, "opencode");
+        assert_eq!(s.cwd, std::path::Path::new("/home/u/proj"));
+        assert_eq!(s.updated_ms, 1_700_000_000_000);
+        assert_eq!(s.title, "the title");
+        assert!(parse_dump_line("garbage").is_none());
+        assert!(parse_dump_line("a\tb").is_none());
+    }
 
     #[test]
     fn cycle_wraps_both_ways() {

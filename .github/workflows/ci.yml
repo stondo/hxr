@@ -22,7 +22,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,7 @@ jobs:
       # Adapter tests are hermetic: HXR_HOME fixtures mean CI needs none of
       # the supported harness CLIs installed.
       - run: cargo fmt --check
+        if: matrix.os == 'ubuntu-latest'
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release

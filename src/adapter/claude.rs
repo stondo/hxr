@@ -108,6 +108,7 @@ fn transcribe(path: &Path, proj_dir: &Path) -> Option<Session> {
         .map(PathBuf::from);
     let title = last_ai_title(path).or_else(|| util::first_user_text(&head, "user"));
 
+    #[cfg(unix)]
     if cwd.is_none() {
         cwd = demunge(proj_dir.file_name()?.to_str()?).into_iter().next();
     }
@@ -140,6 +141,7 @@ fn last_ai_title(path: &Path) -> Option<String> {
 /// Demunge a claude project dir name back to plausible cwd candidates.
 /// The munge maps `/`, `.` and `-` all to `-`, so `/a/b` and `/a.b` collide;
 /// try candidates in order and let callers verify with `is_dir`.
+#[cfg(unix)]
 fn demunge(name: &str) -> Vec<PathBuf> {
     let slashed = format!("/{}", name.replace('-', "/"));
     let dotted = slashed.replace("//", "/.");
@@ -179,6 +181,7 @@ fn load_history(home: &std::path::Path) -> Result<HashMap<String, String>> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn demunge_candidates() {
         let c = demunge("home-user-PARA-Projects-myproj");

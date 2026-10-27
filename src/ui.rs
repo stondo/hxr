@@ -143,7 +143,11 @@ pub fn format_lines(sessions: &[Session], tags: bool) -> Vec<String> {
         .map(|s| {
             let mut title = s.title.split_whitespace().collect::<Vec<_>>().join(" ");
             if tags {
-                title = format!("[{}] {title}", tag(&s.harness));
+                let mut t = tag(&s.harness);
+                if let Some(host) = s.extra.get("remote") {
+                    t = format!("{t}@{host}");
+                }
+                title = format!("[{t}] {title}");
             }
             let short = shorten_dir(&s.cwd);
             let short = if s.cwd.is_dir() {
@@ -240,15 +244,13 @@ mod tests {
             updated_ms: 0,
             extra: Default::default(),
         };
-        let lines = format_lines(
-            &[mk("codex", "/tmp"), mk("qwen", "/nonexistent-hxr-t")],
-            true,
-        );
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        let lines = format_lines(&[mk("codex", &tmp), mk("qwen", "/nonexistent-hxr-t")], true);
         assert!(lines[0].contains("[cx] a title"));
         assert!(lines[1].contains("[qw] a title"));
         assert!(lines[1].contains("⚠"));
         assert!(!lines[0].contains("⚠"));
-        let plain = format_lines(&[mk("codex", "/tmp")], false);
+        let plain = format_lines(&[mk("codex", &tmp)], false);
         assert!(plain[0].contains("a title") && !plain[0].contains("[cx]"));
     }
 }

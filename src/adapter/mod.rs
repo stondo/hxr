@@ -80,12 +80,14 @@ pub fn registry(include_all: bool) -> Vec<Box<dyn Harness>> {
     ]
 }
 
-/// Root home for harness stores: `$HXR_HOME` (tests / sandboxes) or `$HOME`.
+/// Root home for harness stores: `$HXR_HOME` (tests / sandboxes), `$HOME`,
+/// or `$USERPROFILE` (Windows).
 pub fn home_dir() -> Result<std::path::PathBuf> {
     std::env::var_os("HXR_HOME")
         .or_else(|| std::env::var_os("HOME"))
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(std::path::PathBuf::from)
-        .context("hxr: neither HXR_HOME nor HOME is set")
+        .context("hxr: neither HXR_HOME, HOME nor USERPROFILE is set")
 }
 
 /// A compiled content-search pattern (`-G`). Literal patterns (no regex
@@ -144,14 +146,24 @@ pub fn snippet(text: &str, m: std::ops::Range<usize>) -> String {
 
 /// True if `bin` resolves to an executable file on PATH.
 pub fn on_path(bin: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
     std::env::split_paths(&paths).any(|dir| {
-        let f = dir.join(bin);
-        std::fs::metadata(&f)
-            .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
-            .unwrap_or(false)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let f = dir.join(bin);
+            std::fs::metadata(&f)
+                .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+                .unwrap_or(false)
+        }
+        #[cfg(windows)]
+        {
+            // PATHEXT resolution: try the bare name, then common extensions
+            ["", ".exe", ".cmd", ".bat", ".com"]
+                .iter()
+                .any(|ext| dir.join(format!("{bin}{ext}")).is_file())
+        }
     })
 }

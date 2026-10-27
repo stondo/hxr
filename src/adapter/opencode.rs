@@ -211,7 +211,10 @@ fn xdg_default_db() -> Option<PathBuf> {
         Some(h) => PathBuf::from(h).join(".local/share"),
         None => match std::env::var_os("XDG_DATA_HOME") {
             Some(x) => PathBuf::from(x),
-            None => PathBuf::from(std::env::var_os("HOME")?).join(".local/share"),
+            None => {
+                let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+                PathBuf::from(home).join(".local/share")
+            }
         },
     };
     Some(base.join("opencode").join("opencode.db"))

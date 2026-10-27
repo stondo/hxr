@@ -27,6 +27,9 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             setup: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            setup: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +43,8 @@ jobs:
         if: matrix.setup != ''
         run: ${{ matrix.setup }}
       - run: cargo build --release --target ${{ matrix.target }}
-      - name: package
+      - name: package (unix)
+        if: runner.os != 'Windows'
         run: |
           VER="${GITHUB_REF_NAME#v}"
           STAGE="hxr-picker-${VER}-${{ matrix.target }}"
@@ -49,6 +53,17 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${STAGE}/"
           tar -czf "dist/${STAGE}.tar.gz" -C dist "${STAGE}"
           rm -rf "dist/${STAGE}"
+      - name: package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "${env:GITHUB_REF_NAME}".Substring(1)
+          $stage = "hxr-picker-$ver-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force "dist/$stage" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/hxr.exe" "dist/$stage/"
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE "dist/$stage/"
+          Compress-Archive -Path "dist/$stage" -DestinationPath "dist/$stage.zip"
+          Remove-Item -Recurse "dist/$stage"
       - uses: actions/upload-artifact@v4
         with:
           name: hxr-picker-${{ matrix.target }}

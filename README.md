@@ -29,9 +29,10 @@ tab next · shift-tab prev · enter resume · esc cancel
 
 ## Requirements
 
-- Linux or macOS (uses `exec`, unix permissions)
+- Linux, macOS or Windows 10+ (process replace on unix, spawn on Windows)
 - [fzf](https://github.com/junegunn/fzf) — e.g. `dnf install fzf`,
-  `brew install fzf`, `apt install fzf`
+  `brew install fzf`, `apt install fzf` (`winget install junegunn.fzf` on
+  Windows)
 - The harness CLIs you want listed (a harness only shows up when its binary is
   on `PATH` **and** it has at least one session)
 
@@ -100,6 +101,18 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 
 Format details, evidence and per-harness pitfalls live in
 [ANALYSIS.md](ANALYSIS.md).
+
+## Remote machines
+
+`hxr -R deep -R perception` lists those machines' sessions too, live over
+ssh — nothing is copied, nothing is synced; the sessions stay where they
+live. Merged-view tags carry the origin (`[cx@deep]`), and Enter delegates
+the resume to the remote's own hxr over `ssh -t` (so the right CLI starts
+in the right directory on the right machine). Works with the picker, and
+with `--list` for scripting. Requirements per remote: ssh access (key
+auth; `~/.ssh/config` aliases work) and hxr >= 0.7.0 on its PATH. In
+content mode (`-G` / Ctrl-G) remote sessions match by title; body search
+runs on the machine you're sitting at.
 
 ## Drift checks
 
