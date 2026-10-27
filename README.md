@@ -8,7 +8,7 @@ session — across every harness you have installed — and resume it in the rig
 directory with the right command.
 
 ```
-[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix
+[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes
 tab next · shift-tab prev · enter resume · esc cancel
 ──────────────────────────────────────────────────────────────
   12 min ago   [oc] Adopt froggeric v22.5…   ~/PARA/Projects/local-ai
@@ -22,7 +22,8 @@ tab next · shift-tab prev · enter resume · esc cancel
 - **`hxr show`**: render a session transcript read-only through `$PAGER`
 - **Right resume semantics** per harness: correct CLI flag, correct working
   directory (`claude -r <id>`, `codex resume <uuid>`, `pi --session <path>`,
-  `omp -r <id>`, `qwen -r <id>`, `reasonix -r <path> --dir <ws>`, …)
+  `omp -r <id>`, `qwen -r <id>`, `reasonix -r <path> --dir <ws>`,
+  `hermes --resume <id>`, …)
 - **Fast**: parallel read-only discovery (~900 sessions in ~50 ms), bounded
   I/O, never full-scans big transcripts for the list view
 - **Read-only** by design; broken stores are skipped, never touched
@@ -98,6 +99,7 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | Kimi | `~/.kimi-code/session_index.jsonl` + wire event streams | `kimi -S <id>` |
 | Copilot CLI | `~/.copilot/session-state/<uuid>/workspace.yaml` | `copilot -r <id>` |
 | reasonix | `~/.reasonix/sessions/*.meta.json` | `reasonix -r <path> --dir <ws>` |
+| Hermes | `~/.hermes/state.db` (`sessions` ∪ `messages`) + legacy `~/.hermes/sessions/session_*.json` | `hermes --resume <id>` |
 
 Format details, evidence and per-harness pitfalls live in
 [ANALYSIS.md](ANALYSIS.md).

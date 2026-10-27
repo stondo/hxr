@@ -1,7 +1,8 @@
 # hxr — harness session storage analysis
 
-Verified against live stores on Linux on **2026-10-26**.
-All seven harnesses were installed with real sessions when these formats were
+Verified against live stores on Linux on **2026-10-26** (hermes on
+2026-10-27 against a real v0.21.5 install).
+All harnesses were installed with real sessions when these formats were
 captured. Paths below use `~` for the user's home directory.
 
 Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-line reads.
@@ -18,6 +19,7 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
 | qwen | `~/.qwen/projects/<munged-cwd>/chats/<uuid>.jsonl` (106) + sibling `.runtime.json`; `qwen sessions list --json` exists as alternative index | chats filename / line-1 `sessionId` | line-1 `cwd` / runtime `work_dir` | first user msg in jsonl | file mtime / runtime `started_at` | `qwen -r <id>` from original cwd |
 | kimi | `~/.kimi-code/session_index.jsonl` (`sessionId`/`sessionDir`/`workDir`) + `<sessionDir>/agents/main/wire.jsonl` event streams (192) | index `sessionId` (`session_<uuid>`) | index `workDir` | first `turn.prompt` entry's `input[].text`; model from first `llm.request` | wire.jsonl mtime | `kimi -S <id>` from workDir |
 | reasonix | `~/.reasonix/sessions/<name>.jsonl` + sibling `.meta.json` (7) | file path (session "name", e.g. `code-local-ai`) | `meta.workspace` | `meta.summary` (may be long — truncate) | file mtime | `reasonix -r <path> --dir <workspace>` |
+| hermes | `~/.hermes/state.db` `sessions` table (current; WAL) ∪ legacy `~/.hermes/sessions/session_<id>.json` flat objects (44 files live) | `sessions.id` (`YYYYMMDD_HHMMSS_<hex>`); legacy `session_id` | `sessions.cwd` — only newer rows; legacy files record none → home fallback | `sessions.title`; legacy: first user `messages[]` entry | `coalesce(last_activity_at, ended_at, started_at)` (s); legacy file mtime | `hermes --resume <id>` — resolves id-or-title against state.db only |
 
 ## Per-harness evidence and details
 
@@ -111,6 +113,33 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
   `-r, --resume string` = "session file path, session ID, or machine session
   ID"). `reasonix session list --json` lists only *machine* sessions (empty
   here) — not usable as index.
+
+### hermes
+Two eras of storage, read as a union (live evidence: netcup, v0.21.5,
+8 db rows + 44 legacy files, 7 overlapping):
+
+- Current: `~/.hermes/state.db` (sqlite, WAL — concurrent readers fine while
+  the gateway daemon runs). `sessions` table (62 columns): `title`, `cwd`
+  (**only newer rows** — pre-May-2026 rows are NULL → resume dir falls back
+  to home), `started_at`/`ended_at`/`last_activity_at` epoch seconds,
+  `input_tokens`/`output_tokens`/`reasoning_tokens`/`estimated_cost_usd`,
+  `git_branch`, `source` (`cli`, `whatsapp` gateway chats are resumable too),
+  `archived`/`hidden`/`auto_archived` housekeeping flags (filtered), and
+  `parent_session_id` for compression continuations (children hidden unless
+  `--all`; `--resume` follows the chain to the live tip itself). Bodies: the
+  `messages` table (`role`, plain-text `content`, `timestamp`) — there is an
+  FTS5 index too, but hxr does its own regex matching over rows.
+- Legacy: `~/.hermes/sessions/session_<id>.json` — one flat JSON object:
+  `session_id` (= filename without `session_`/`.json`), `model`,
+  ISO `session_start`/`last_updated`, OpenAI-shaped `messages[{role,content}]`.
+  **No cwd anywhere in the file.** `sessions.json` in the same dir is an
+  (empty) index — the glob must not match it.
+- Resume: `hermes --resume <id-or-title>` — resolution (`_resolve_session_by_
+  name_or_id` in `hermes_cli/main.py`) queries state.db **only**, so legacy
+  file-only sessions are listed but their resume is best-effort. By default
+  a resume also cds into the recorded working directory itself; hxr still
+  spawns it from `session.cwd`.
+- Timestamps in the db are epoch **seconds** (float) — ×1000 for hxr's ms.
 
 ## Detection rule ("installed and has sessions")
 

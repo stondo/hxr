@@ -70,6 +70,7 @@ pub fn tag(harness: &str) -> String {
         "kimi" => "ki",
         "copilot" => "cp",
         "reasonix" => "rx",
+        "hermes" => "he",
         other => return other.chars().take(2).collect(),
     }
     .to_string()

@@ -207,6 +207,52 @@ fn all_adapters_read_fixtures() {
         "{\"summary\":\"archived\",\"workspace\":\"/tmp\"}",
     );
 
+    // --- hermes: state.db (current) ∪ session_*.json (legacy), db wins
+    let he_db = home.join(".hermes/state.db");
+    write(&he_db, "");
+    {
+        let c = rusqlite::Connection::open(&he_db).unwrap();
+        c.execute_batch(
+            "CREATE TABLE sessions (id TEXT, title TEXT, cwd TEXT, model TEXT,
+             git_branch TEXT, message_count INTEGER, input_tokens INTEGER,
+             output_tokens INTEGER, reasoning_tokens INTEGER,
+             estimated_cost_usd REAL, parent_session_id TEXT,
+             started_at REAL, ended_at REAL, last_activity_at REAL,
+             archived INTEGER DEFAULT 0, hidden INTEGER DEFAULT 0,
+             auto_archived INTEGER DEFAULT 0);
+             CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT,
+             role TEXT, content TEXT, timestamp REAL);
+             INSERT INTO sessions VALUES ('20260101_120000_abcd01','Hermes One','/tmp/he1','deep-v4','main',
+               3, 1200, 340, 56, 0.0123, NULL, 1767265200.5, 1767265600.5, 1767265610.5, 0, 0, 0);
+             INSERT INTO sessions VALUES ('20260101_130000_child01','compression child',NULL,NULL,NULL,
+               NULL, NULL, NULL, NULL, NULL, '20260101_120000_abcd01',
+               1767265800.0, 1767265900.0, 1767265910.0, 0, 0, 0);
+             INSERT INTO sessions VALUES ('20260101_140000_arch01','archived row',NULL,NULL,NULL,
+               NULL, NULL, NULL, NULL, NULL, NULL,
+               1767265900.0, NULL, NULL, 1, 0, 0);
+             INSERT INTO sessions VALUES ('20260101_150000_dup0001','db version wins',NULL,NULL,NULL,
+               NULL, NULL, NULL, NULL, NULL, NULL,
+               1767265950.0, NULL, NULL, 0, 0, 0);
+             INSERT INTO messages VALUES (1,'20260101_120000_abcd01','user','needleHE in state db',1.0);
+             INSERT INTO messages VALUES (2,'20260101_120000_abcd01','assistant','hermes rendered reply',2.0);
+             INSERT INTO messages VALUES (3,'20260101_150000_dup0001','user','dup body',1.0);",
+        )
+        .unwrap();
+    }
+    write(
+        &home.join(".hermes/sessions/session_20260101_150000_dup0001.json"),
+        "{\"session_id\":\"20260101_150000_dup0001\",\"model\":\"old-model\",
+          \"messages\":[{\"role\":\"user\",\"content\":\"legacy-only body\"}]}",
+    );
+    write(
+        &home.join(".hermes/sessions/session_20260102_090000_legac1.json"),
+        "{\"session_id\":\"20260102_090000_legac1\",\"model\":\"old-model\",
+          \"messages\":[{\"role\":\"assistant\",\"skip\":\"no\"},
+           {\"role\":\"user\",\"content\":\"legacy hermes title\\nsecond line\"},
+           {\"role\":\"assistant\",\"content\":\"needleHE in legacy file\"}]}",
+    );
+    write(&home.join(".hermes/sessions/sessions.json"), "{}");
+
     // ---------------- assertions (HXR_HOME set for the whole block) --------
     with_hxr_home(&home, || {
         let oc = run_adapter("opencode");
@@ -288,6 +334,41 @@ fn all_adapters_read_fixtures() {
         assert_eq!(c.cwd, Path::new("/tmp/cp"));
         assert!(c.updated_ms > 0);
 
+        let he = run_adapter("hermes");
+        assert_eq!(
+            he.len(),
+            3,
+            "child + archived rows filtered, legacy dup deduped against the db"
+        );
+        let hd = find(&he, "20260101_120000_abcd01");
+        assert_eq!(hd.title, "Hermes One");
+        assert_eq!(hd.cwd, Path::new("/tmp/he1"));
+        assert_eq!(hd.updated_ms, 1_767_265_610_500, "last_activity_at wins");
+        assert_eq!(hd.extra.get("model").map(String::as_str), Some("deep-v4"));
+        assert_eq!(hd.extra.get("branch").map(String::as_str), Some("main"));
+        assert_eq!(
+            hd.extra.get("tokens").map(String::as_str),
+            Some("in 1200 / out 340 / reason 56")
+        );
+        assert_eq!(
+            hd.extra.get("totalCostUsd").map(String::as_str),
+            Some("0.0123")
+        );
+        let hl = find(&he, "20260102_090000_legac1");
+        assert_eq!(hl.title, "legacy hermes title", "first user message");
+        assert_eq!(hl.cwd, home, "legacy files record no cwd: home fallback");
+        assert_eq!(
+            find(&he, "20260101_150000_dup0001").title,
+            "db version wins"
+        );
+        let (argv, cwd) = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "hermes")
+            .unwrap()
+            .resume(hd, &[]);
+        assert_eq!(argv, vec!["hermes", "--resume", "20260101_120000_abcd01"]);
+        assert_eq!(cwd, Path::new("/tmp/he1"));
+
         // --- render (hxr show): file-backed adapters produce turns
         let rd = |harness: &str, s: &Session| {
             registry(false)
@@ -351,6 +432,21 @@ fn all_adapters_read_fixtures() {
         assert!(cm("qwen", find(&qw, "q1"), "qwen ask").is_some());
         assert!(cm("kimi", find(&km, "session_k1"), "needleKI").is_some());
         assert!(cm("reasonix", find(&rx, "demo"), "needleRX").is_some());
+        assert!(cm("hermes", hd, "needleHE").is_some(), "db body search");
+        assert!(
+            cm("hermes", hl, "needleHE").is_some(),
+            "legacy file body search"
+        );
+        assert!(
+            rd("hermes", hd).unwrap().contains("hermes rendered reply"),
+            "db transcript"
+        );
+        assert!(
+            rd("hermes", hl)
+                .unwrap()
+                .contains("needleHE in legacy file"),
+            "legacy transcript"
+        );
 
         let r = find(&rx, "demo");
         assert_eq!(r.title, "R summary");
