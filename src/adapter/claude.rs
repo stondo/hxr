@@ -105,17 +105,10 @@ fn transcribe(path: &Path, _proj_dir: &Path) -> Option<Session> {
         .filter_map(|v| v.get("cwd"))
         .filter_map(|c| c.as_str())
         .find(|c| !c.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                demunge(_proj_dir.file_name()?.to_str()?).into_iter().next()
-            }
-            #[cfg(windows)]
-            {
-                None
-            }
-        })?; // no cwd derivable at all -> unusable session
+        .map(PathBuf::from);
+    #[cfg(unix)]
+    let cwd = cwd.or_else(|| demunge(_proj_dir.file_name()?.to_str()?).into_iter().next());
+    let cwd = cwd?; // no cwd derivable at all -> unusable session
     let title = last_ai_title(path).or_else(|| util::first_user_text(&head, "user"));
 
     let mut extra = std::collections::BTreeMap::new();
