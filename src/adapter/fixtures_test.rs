@@ -188,7 +188,7 @@ fn all_adapters_read_fixtures() {
         &home.join(".kimi-code/session_index.jsonl"),
         &format!(
             "{{\"sessionId\":\"session_k1\",\"sessionDir\":\"{}\",\"workDir\":\"/tmp/kimi\"}}\n",
-            km_dir.to_string_lossy()
+            km_dir.to_string_lossy().replace('\\', "/")
         ),
     );
 
