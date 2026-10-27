@@ -95,24 +95,28 @@ impl Harness for Claude {
 
 /// Extract one Session from a transcript with bounded reads
 /// (head: 256 KiB for cwd + first user text; tail: 64 KiB for the last ai-title).
-fn transcribe(path: &Path, proj_dir: &Path) -> Option<Session> {
+fn transcribe(path: &Path, _proj_dir: &Path) -> Option<Session> {
     let id = path.file_stem()?.to_string_lossy().into_owned();
     let updated_ms = util::mtime_ms(path);
 
     let head = util::read_jsonl_head(path, 256 * 1024);
-    let mut cwd = head
+    let cwd = head
         .iter()
         .filter_map(|v| v.get("cwd"))
         .filter_map(|c| c.as_str())
         .find(|c| !c.is_empty())
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+        .or_else(|| {
+            #[cfg(unix)]
+            {
+                demunge(_proj_dir.file_name()?.to_str()?).into_iter().next()
+            }
+            #[cfg(windows)]
+            {
+                None
+            }
+        })?; // no cwd derivable at all -> unusable session
     let title = last_ai_title(path).or_else(|| util::first_user_text(&head, "user"));
-
-    #[cfg(unix)]
-    if cwd.is_none() {
-        cwd = demunge(proj_dir.file_name()?.to_str()?).into_iter().next();
-    }
-    let cwd = cwd?; // no cwd derivable at all -> unusable session
 
     let mut extra = std::collections::BTreeMap::new();
     extra.insert("path".to_string(), path.to_string_lossy().into_owned());
