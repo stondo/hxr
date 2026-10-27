@@ -177,12 +177,20 @@ fn transcribe(path: &Path, home: &Path, by_name: &HashMap<String, PathBuf>) -> O
     })
 }
 
-/// Chat entries carry `content` directly (no message envelope).
+/// Chat entries carry `content` directly (no message envelope); model turns
+/// arrive as `type: "gemini"` with plain-string content (an `assistant`
+/// type is accepted too, forward-compat). `<`-prefixed user text is CLI
+/// boilerplate (session_context) — skipped.
 fn extract_turn(v: &serde_json::Value) -> Option<(String, String)> {
-    let role = v.get("type")?.as_str()?.to_string();
-    if !matches!(role.as_str(), "user" | "assistant") {
+    let raw = v.get("type")?.as_str()?;
+    let role = match raw {
+        "user" => "user",
+        "gemini" | "assistant" => "assistant",
+        _ => return None,
+    };
+    let text = util::text_from_message(v)?;
+    if role == "user" && text.trim_start().starts_with('<') {
         return None;
     }
-    let text = util::text_from_message(v)?;
-    Some((role, text))
+    Some((role.to_string(), text))
 }

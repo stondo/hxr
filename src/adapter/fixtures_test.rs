@@ -286,8 +286,8 @@ fn all_adapters_read_fixtures() {
           \"content\":[{\"text\":\"<session_context>\\nboilerplate\"}]}\n\
          {\"id\":\"e2\",\"timestamp\":\"2026-01-01T10:00:02Z\",\"type\":\"user\",\
           \"content\":[{\"text\":\"needleGM in gemini body\"}]}\n\
-         {\"id\":\"e3\",\"timestamp\":\"2026-01-01T10:01:00Z\",\"type\":\"assistant\",\
-          \"content\":[{\"text\":\"gemini rendered reply\"}]}\n\
+         {\"id\":\"e3\",\"timestamp\":\"2026-01-01T10:01:00Z\",\"type\":\"gemini\",\
+          \"content\":\"gemini rendered reply\"}\n\
          {\"$set\":{\"lastUpdated\":\"2026-01-01T10:02:00Z\"}}\n",
     );
     // aborted session: user prompt recorded, model reply never landed

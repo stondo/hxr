@@ -177,7 +177,9 @@ Two eras of storage, read as a union (live evidence: netcup, v0.21.5,
   project dirs fall back to home.
 - First user entry is always a `<session_context>` boilerplate dump —
   skipped like claude's command-caveats. Aborted sessions (prompt recorded,
-  reply never completed) are real resume points and stay listed.
+  reply never completed) are real resume points and stay listed. Model
+  turns are written as `type: "gemini"` with **plain-string** `content`
+  (not an `assistant` parts array — verified on a completed turn).
 - Resume: `--resume` only accepts `latest` or a per-project *index*, not a
   session id — `--session-file <path>` is the stable handle. Headless
   non-tty runs need `--skip-trust`.
