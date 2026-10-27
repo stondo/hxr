@@ -253,7 +253,68 @@ fn all_adapters_read_fixtures() {
     );
     write(&home.join(".hermes/sessions/sessions.json"), "{}");
 
+    // --- aider: per-project markdown chat logs, sessions delimited by headers
+    let ad_dir = home.join("lab-projects/adproj");
+    write(
+        &ad_dir.join(".aider.chat.history.md"),
+        "# aider chat started at 2026-01-01 10:00:00\n\
+         > /usr/bin/aider --message x\n\
+         > Model: openai/DeepSeek-V4-Flash-0731 with whole edit format\n\
+         #### first aider ask\n\
+         thinking then reply\n\
+         ```\nhello.py\n```\n\
+         > Tokens: 100 sent, 50 received.\n\
+         > Applied edit to hello.py\n\
+         # aider chat started at 2026-01-02 11:00:00\n\
+         > /usr/bin/aider --message y\n\
+         > Model: openai/DeepSeek-V4-Flash-0731 with whole edit format\n\
+         #### needleAD in aider block\n\
+         second reply body\n\
+         > Tokens: 200 sent, 80 received.\n",
+    );
+    write(&ad_dir.join(".aider.input.history"), "irrelevant\n");
+
+    // --- gemini: tmp/<project>/chats jsonl + projects.json cwd map
+
+    let gm_dir = home.join(".gemini/tmp/labproj/chats");
+    write(
+        &gm_dir.join("session-2026-01-01T10-00-00g11111.jsonl"),
+        "{\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"projectHash\":\"h1\",\
+          \"startTime\":\"2026-01-01T10:00:00Z\",\
+          \"lastUpdated\":\"2026-01-01T10:02:00Z\",\"kind\":\"main\"}\n\
+         {\"id\":\"e1\",\"timestamp\":\"2026-01-01T10:00:01Z\",\"type\":\"user\",\
+          \"content\":[{\"text\":\"<session_context>\\nboilerplate\"}]}\n\
+         {\"id\":\"e2\",\"timestamp\":\"2026-01-01T10:00:02Z\",\"type\":\"user\",\
+          \"content\":[{\"text\":\"needleGM in gemini body\"}]}\n\
+         {\"id\":\"e3\",\"timestamp\":\"2026-01-01T10:01:00Z\",\"type\":\"assistant\",\
+          \"content\":[{\"text\":\"gemini rendered reply\"}]}\n\
+         {\"$set\":{\"lastUpdated\":\"2026-01-01T10:02:00Z\"}}\n",
+    );
+    // aborted session: user prompt recorded, model reply never landed
+    write(
+        &gm_dir.join("session-2026-01-02T11-00-00g22222.jsonl"),
+        "{\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"projectHash\":\"h1\",\
+          \"startTime\":\"2026-01-02T11:00:00Z\",\"lastUpdated\":\"2026-01-02T11:00:05Z\",\"kind\":\"main\"}\n\
+         {\"id\":\"e4\",\"timestamp\":\"2026-01-02T11:00:01Z\",\"type\":\"user\",\
+          \"content\":[{\"text\":\"<session_context>x\"}]}\n\
+         {\"id\":\"e5\",\"timestamp\":\"2026-01-02T11:00:02Z\",\"type\":\"user\",\
+          \"content\":[{\"text\":\"aborted but listed\"}]}\n",
+    );
+    // project name without a projects.json mapping → home fallback
+    write(
+        &home.join(".gemini/tmp/orphanproj/chats/session-2026-01-03T12-00-00g33333.jsonl"),
+        "{\"sessionId\":\"33333333-3333-4333-8333-333333333333\",\"projectHash\":\"h2\",\
+          \"startTime\":\"2026-01-03T12:00:00Z\",\"kind\":\"main\"}\n\
+         {\"id\":\"e6\",\"timestamp\":\"2026-01-03T12:00:01Z\",\"type\":\"user\",\
+          \"content\":[{\"text\":\"orphan project prompt\"}]}\n",
+    );
+    write(
+        &home.join(".gemini/projects.json"),
+        "{\"projects\":{\"/tmp/labproj\":\"labproj\"}}",
+    );
+
     // --- goose: sessions.db with parts-array transcripts
+
     let gs_db = home.join(".local/share/goose/sessions/sessions.db");
     write(&gs_db, "");
     {
@@ -426,6 +487,53 @@ fn all_adapters_read_fixtures() {
         );
         assert_eq!(cwd, Path::new("/tmp/gs1"));
 
+        let gm = run_adapter("gemini");
+        assert_eq!(gm.len(), 3, "aborted sessions stay listed");
+        let g1111 = find(&gm, "11111111-1111-4111-8111-111111111111");
+        assert_eq!(
+            g1111.title, "needleGM in gemini body",
+            "session_context boilerplate skipped"
+        );
+        assert_eq!(g1111.cwd, Path::new("/tmp/labproj"), "projects.json map");
+        assert_eq!(
+            find(&gm, "22222222-2222-4222-8222-222222222222").title,
+            "aborted but listed"
+        );
+        assert_eq!(
+            find(&gm, "33333333-3333-4333-8333-333333333333").cwd,
+            home,
+            "unmapped project name falls back to home"
+        );
+        let (argv, cwd) = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "gemini")
+            .unwrap()
+            .resume(g1111, &[]);
+        assert_eq!(argv[0], "gemini");
+        assert!(argv.ends_with(&["--session-file".to_string(), g1111.extra["path"].clone()]));
+        assert_eq!(cwd, Path::new("/tmp/labproj"));
+
+        let ad = run_adapter("aider");
+        assert_eq!(ad.len(), 2, "one session per started-block");
+        let ad_path = home.join("lab-projects/adproj/.aider.chat.history.md");
+        let a0 = find(&ad, &format!("{}#0", ad_path.display()));
+        assert_eq!(a0.title, "first aider ask");
+        assert_eq!(a0.cwd, home.join("lab-projects/adproj"));
+        assert_eq!(
+            a0.extra.get("model").map(String::as_str),
+            Some("openai/DeepSeek-V4-Flash-0731")
+        );
+        assert_eq!(a0.extra.get("tokens").map(String::as_str), Some("100 + 50"));
+        let a1 = find(&ad, &format!("{}#1", ad_path.display()));
+        assert_eq!(a1.title, "needleAD in aider block");
+        let (argv, cwd) = registry(false)
+            .into_iter()
+            .find(|h| h.name() == "aider")
+            .unwrap()
+            .resume(a0, &[]);
+        assert_eq!(argv, vec!["aider", "--restore-chat-history"]);
+        assert_eq!(cwd, home.join("lab-projects/adproj"));
+
         // --- render (hxr show): file-backed adapters produce turns
         let rd = |harness: &str, s: &Session| {
             registry(false)
@@ -509,6 +617,25 @@ fn all_adapters_read_fixtures() {
             rd("goose", g1).unwrap().contains("goose rendered reply")
                 && !rd("goose", g1).unwrap().contains("turn-context"),
             "goose transcript skips boilerplate"
+        );
+        assert!(
+            cm("gemini", g1111, "needleGM").is_some(),
+            "gemini body search"
+        );
+        assert!(
+            rd("gemini", g1111)
+                .unwrap()
+                .contains("gemini rendered reply"),
+            "gemini transcript"
+        );
+        assert!(cm("aider", a1, "needleAD").is_some(), "aider block search");
+        assert!(
+            rd("aider", a0).unwrap().contains("[user]\nfirst aider ask"),
+            "aider transcript user turn"
+        );
+        assert!(
+            rd("aider", a0).unwrap().contains("hello.py"),
+            "aider transcript keeps file listing"
         );
 
         let r = find(&rx, "demo");

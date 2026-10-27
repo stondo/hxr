@@ -72,6 +72,8 @@ pub fn tag(harness: &str) -> String {
         "reasonix" => "rx",
         "hermes" => "he",
         "goose" => "go",
+        "gemini" => "ge",
+        "aider" => "ai",
         other => return other.chars().take(2).collect(),
     }
     .to_string()

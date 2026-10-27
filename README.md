@@ -8,7 +8,7 @@ session — across every harness you have installed — and resume it in the rig
 directory with the right command.
 
 ```
-[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes  goose
+[all]  opencode  claude  codex  pi  omp  qwen  kimi  reasonix  hermes  goose  gemini  aider
 tab next · shift-tab prev · enter resume · esc cancel
 ──────────────────────────────────────────────────────────────
   12 min ago   [oc] Adopt froggeric v22.5…   ~/PARA/Projects/local-ai
@@ -101,6 +101,8 @@ fzf` works too. Dead session directories are flagged with `⚠`.
 | reasonix | `~/.reasonix/sessions/*.meta.json` | `reasonix -r <path> --dir <ws>` |
 | Hermes | `~/.hermes/state.db` (`sessions` ∪ `messages`) + legacy `~/.hermes/sessions/session_*.json` | `hermes --resume <id>` |
 | Goose | `~/.local/share/goose/sessions/sessions.db` (`sessions` ∪ `messages`) | `goose session --resume --session-id <id>` |
+| Gemini CLI | `~/.gemini/tmp/<project>/chats/*.jsonl` + `projects.json` cwd map | `gemini --session-file <path>` |
+| aider | `<project>/.aider.chat.history.md` (markdown, per-started blocks) | `aider --restore-chat-history` in the project |
 
 Format details, evidence and per-harness pitfalls live in
 [ANALYSIS.md](ANALYSIS.md).

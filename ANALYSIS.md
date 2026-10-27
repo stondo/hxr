@@ -21,6 +21,8 @@ Total corpus: **~600 sessions**, 3 SQLite DBs, ~350 JSONL files needing first-li
 | reasonix | `~/.reasonix/sessions/<name>.jsonl` + sibling `.meta.json` (7) | file path (session "name", e.g. `code-local-ai`) | `meta.workspace` | `meta.summary` (may be long — truncate) | file mtime | `reasonix -r <path> --dir <workspace>` |
 | hermes | `~/.hermes/state.db` `sessions` table (current; WAL) ∪ legacy `~/.hermes/sessions/session_<id>.json` flat objects (44 files live) | `sessions.id` (`YYYYMMDD_HHMMSS_<hex>`); legacy `session_id` | `sessions.cwd` — only newer rows; legacy files record none → home fallback | `sessions.title`; legacy: first user `messages[]` entry | `coalesce(last_activity_at, ended_at, started_at)` (s); legacy file mtime | `hermes --resume <id>` — resolves id-or-title against state.db only |
 | goose | `~/.local/share/goose/sessions/sessions.db` sqlite: `sessions` + `messages` (parts-array `content_json`) | `id` (`YYYYMMDD_N`) | `working_dir` | user-renamed `name` (`user_set_name`) else llm `description` | `updated_at` (UTC `CURRENT_TIMESTAMP` string) | `goose session --resume --session-id <id>` from working_dir |
+| gemini | `~/.gemini/tmp/<project>/chats/session-*.jsonl` + `~/.gemini/projects.json` (cwd→project-name map) | header `sessionId` uuid; filename fallback (rewinds drop the header) | projects.json inverted over the parent dir name (`<base>-N` on collisions) → home fallback | first non-`<session_context>` user entry | file mtime (jsonl `$set.lastUpdated` is not worth a tail scan) | `gemini --session-file <path>` from the original cwd |
+| aider | `<project>/.aider.chat.history.md` markdown (blocks per `# aider chat started`), `~/.aider/chat-history.md` fallback | `path#block` (opaque; no id resume in aider) | history file's directory | block's `#### ` prompt | file mtime (block timestamps are local naive) | `aider --restore-chat-history` in the project (continue-latest mapping, per issue #2) |
 
 ## Per-harness evidence and details
 
@@ -161,6 +163,40 @@ Two eras of storage, read as a union (live evidence: netcup, v0.21.5,
 - `user_set_name` is **BOOLEAN** (sqlite numeric) — a `nullif('')`-style
   text projection silently breaks row decoding (found live).
 - Resume: `goose session --resume --session-id <id>` from `working_dir`.
+
+### gemini-cli
+- `~/.gemini/tmp/<project>/chats/session-<ts><hash>.jsonl`. Line 1 is a
+  header (`sessionId` uuid, `projectHash`, ISO `startTime`/`lastUpdated`,
+  `kind`), then entries `{id, timestamp, type: "user"|"assistant",
+  content: [{text}]}` interleaved with `{"$set": {…}}` and `{"$rewindTo":
+  …}` operator records on retried turns. **A rewind can drop the header
+  entirely** — the filename is the reliable id fallback.
+- No cwd in transcripts. `~/.gemini/projects.json` maps cwd → project dir
+  name (basename; collisions get `-1` suffixes). Sessions in unmapped
+  project dirs fall back to home.
+- First user entry is always a `<session_context>` boilerplate dump —
+  skipped like claude's command-caveats. Aborted sessions (prompt recorded,
+  reply never completed) are real resume points and stay listed.
+- Resume: `--resume` only accepts `latest` or a per-project *index*, not a
+  session id — `--session-file <path>` is the stable handle. Headless
+  non-tty runs need `--skip-trust`.
+
+### aider
+- No session store — per-project markdown logs. `<project>/
+  .aider.chat.history.md` accumulates chats delimited by
+  `# aider chat started at <local ts>`; `#### <prompt>` lines are user
+  turns, bare text is the assistant reply (reasoning inside
+  `<thinking-content-…>` wrappers), `> `-prefixed lines are the UI log —
+  `> Model:` and `> Tokens: N sent, M received.` carry useful metadata.
+  `~/.aider/chat-history.md` is the outside-any-project fallback.
+- Resume contract: aider cannot resume a specific session —
+  `--restore-chat-history` reloads the *latest* chat of the project file.
+  Every listed block resumes the same way (continue-latest mapping agreed
+  in issue #2); block ids exist only for listing and `-G` scoping.
+- Discovery: bounded (depth-6) home walk for the well-known filename,
+  hidden dirs / node_modules / target skipped — aider ships no index.
+  Recency is file mtime for every block (delimiter timestamps are local
+  naive strings).
 
 ## Detection rule ("installed and has sessions")
 

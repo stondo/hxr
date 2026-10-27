@@ -5,11 +5,13 @@
 //! isolated: a broken store yields an error (or zero sessions) and never
 //! affects the other adapters.
 
+pub mod aider;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
 #[cfg(test)]
 mod fixtures_test;
+pub mod gemini;
 pub mod goose;
 pub mod hermes;
 pub mod kimi;
@@ -83,6 +85,8 @@ pub fn registry(include_all: bool) -> Vec<Box<dyn Harness>> {
             include_children: include_all,
         }),
         Box::new(goose::Goose),
+        Box::new(gemini::Gemini),
+        Box::new(aider::Aider),
     ]
 }
 
