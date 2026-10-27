@@ -550,8 +550,8 @@ fn all_adapters_read_fixtures() {
 
         let ad = run_adapter("aider");
         assert_eq!(ad.len(), 2, "one session per started-block");
-        let ad_path = home.join("lab-projects/adproj/.aider.chat.history.md");
-        let a0 = find(&ad, &format!("{}#0", ad_path.display()));
+        // ids embed native-separator paths (opaque) — look up by block suffix
+        let a0 = ad.iter().find(|s| s.id.ends_with("#0")).unwrap();
         assert_eq!(a0.title, "first aider ask");
         assert_eq!(a0.cwd, home.join("lab-projects/adproj"));
         assert_eq!(
@@ -559,7 +559,7 @@ fn all_adapters_read_fixtures() {
             Some("openai/DeepSeek-V4-Flash-0731")
         );
         assert_eq!(a0.extra.get("tokens").map(String::as_str), Some("100 + 50"));
-        let a1 = find(&ad, &format!("{}#1", ad_path.display()));
+        let a1 = ad.iter().find(|s| s.id.ends_with("#1")).unwrap();
         assert_eq!(a1.title, "needleAD in aider block");
         let (argv, cwd) = registry(false)
             .into_iter()
