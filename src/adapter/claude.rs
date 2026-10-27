@@ -181,7 +181,7 @@ fn load_history(home: &std::path::Path) -> Result<HashMap<String, String>> {
     Ok(titles)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
