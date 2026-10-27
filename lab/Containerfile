@@ -1,0 +1,46 @@
+# hxr harness lab — a throwaway machine with the harness CLIs installed.
+#
+# Purpose: generate REAL session stores for harnesses the maintainer does not
+# use daily (gemini-cli, aider, goose, crush), by driving each CLI headlessly
+# against an OpenAI-compatible endpoint on the LAN (see lab/run.sh, DEEP_*).
+# The generated stores live in .lab/home (mounted as /root) and double as the
+# live corpus for adapter development and drift checks.
+#
+# Build:  lab/run.sh build        Run: lab/run.sh shell
+# (from the repo root; .lab/ is gitignored)
+
+FROM registry.fedoraproject.org/fedora:42
+
+# Toolchain to build hxr and inspect stores.
+RUN dnf -y install \
+        rust cargo gcc git curl tar bzip2 xz \
+        nodejs npm python3-pip python3-devel \
+        fzf ripgrep sqlite sqlite-devel less vim procps-ng openssh-clients \
+    && dnf clean all
+
+ARG GEMINI_CLI_VERSION=0.65.0
+ARG CRUSH_VERSION=0.98.2
+ARG GOOSE_VERSION=1.56.0
+
+# gemini-cli (npm)
+RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
+
+# crush (charmbracelet) — GitHub release tarball, single static binary
+RUN curl -fsSL \
+        https://github.com/charmbracelet/crush/releases/download/v${CRUSH_VERSION}/crush_${CRUSH_VERSION}_Linux_x86_64.tar.gz \
+        | tar -xz -C /usr/local/bin
+
+# goose (Block) — GitHub release, static musl binary (archive root: ./goose)
+RUN curl -fsSL \
+        https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-x86_64-unknown-linux-musl.tar.gz \
+        | tar -xz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/goose
+
+# aider (python)
+RUN python3 -m pip install --break-system-packages --no-cache-dir aider-chat
+
+# Point the CLIs at the LAN endpoint by default (overridable at `podman run`).
+ENV DEEP_BASE_URL=http://192.168.1.99:8001/v1 \
+    DEEP_MODEL=DeepSeek-V4-Flash-0731
+
+WORKDIR /src

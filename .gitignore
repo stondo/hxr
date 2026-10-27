@@ -9,3 +9,6 @@
 # already existing elements were commented out
 
 #/target
+
+# hxr harness lab working dir (corpus, container home)
+.lab/
