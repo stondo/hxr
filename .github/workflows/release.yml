@@ -99,7 +99,7 @@ jobs:
           LIN_X86=$(fetch_sha x86_64-unknown-linux-musl)
           cat > formula.rb <<EOF
           class HxrPicker < Formula
-            desc "One fzf picker for every coding-agent CLI: list and resume sessions across opencode, Claude Code, Codex, pi, omp, Qwen Code, Kimi, Copilot CLI and reasonix"
+            desc "One fzf picker for every coding-agent CLI: list and resume sessions across opencode, Claude Code, Codex, pi, omp, Qwen Code, Kimi, Copilot CLI, reasonix, Hermes, Goose, Gemini CLI, aider and crush"
             homepage "https://github.com/stondo/hxr"
             url "https://github.com/stondo/hxr/releases/download/${GITHUB_REF_NAME}/hxr-picker-${VER}-x86_64-unknown-linux-musl.tar.gz"
             sha256 "${LIN_X86}"
